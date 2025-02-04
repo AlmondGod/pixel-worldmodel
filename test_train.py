@@ -23,11 +23,15 @@ def main():
     # Create save directory
     SAVE_DIR.mkdir(exist_ok=True)
     
+    # Check if video exists
+    if not Path("pong.mp4").exists():
+        raise FileNotFoundError("pong.mp4 not found! Please place a video file named 'pong.mp4' in the current directory.")
+    
     # Create test data if it doesn't exist
     if not Path(args.data_path).exists():
         print("Creating test dataset...")
         convert_video_to_training_data(
-            video_path="pong.mp4",  # Update this path
+            video_path="pong.mp4",
             output_path=args.data_path,
             target_size=(64, 64),
             n_colors=2,
@@ -37,9 +41,27 @@ def main():
             target_fps=10.0
         )
     
-    # Load dataset
+    # Verify H5 file was created and has data
+    if not Path(args.data_path).exists():
+        raise FileNotFoundError(f"Failed to create {args.data_path}")
+        
+    # Load dataset with verification
     dataset = VideoFrameDataset(args.data_path)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    if len(dataset) == 0:
+        # Print H5 file structure for debugging
+        import h5py
+        with h5py.File(args.data_path, 'r') as f:
+            print("\nH5 file contents:")
+            print("Attributes:", dict(f.attrs))
+            print("Groups:", list(f.keys()))
+            for group in f:
+                print(f"Sequences in {group}:", len(f[group]))
+        raise ValueError(f"Dataset is empty! No sequences were created in {args.data_path}")
+    
+    print(f"Successfully loaded dataset with {len(dataset)} sequences")
+    
+    # Create dataloader
+    dataloader = DataLoader(dataset, batch_size=min(BATCH_SIZE, len(dataset)), shuffle=True)
     
     # Get a batch for testing
     test_batch = next(iter(dataloader))
