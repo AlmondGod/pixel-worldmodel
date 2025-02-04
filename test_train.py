@@ -8,6 +8,7 @@ from train import train_vqvae, train_lam, train_dynamics
 from inference import WorldModelInference
 from pathlib import Path
 import argparse
+import torch.nn.functional as F
 
 SAVE_DIR = Path("saved_models")
 BATCH_SIZE = 4   # Small batch size for testing
@@ -77,7 +78,19 @@ def main():
         
         print("\nTraining VQVAE...")
         vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4)
-        train_vqvae(vqvae, dataloader, vqvae_optim, epochs=args.train_epochs)
+        # Move data to device in the training loop
+        def train_loop(model, dataloader, optimizer, epochs):
+            for epoch in range(epochs):
+                for batch in dataloader:
+                    batch = batch.to(device)  # Move batch to device
+                    optimizer.zero_grad()
+                    recon, _ = model(batch)
+                    loss = F.mse_loss(recon, batch)
+                    loss.backward()
+                    optimizer.step()
+                    print(f"Batch loss: {loss.item():.4f}")
+        
+        train_loop(vqvae, dataloader, vqvae_optim, args.train_epochs)
         torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
         
         print("\nTraining LAM...")
@@ -99,12 +112,15 @@ def main():
         device=device
     )
     
+    # Move test batch to device for inference
+    test_batch = test_batch.to(device)
+    
     # Test both interactive and autonomous modes with small number of steps
     print("\nTesting interactive mode (2 steps)...")
-    inference.run_interactive(test_batch.numpy(), n_steps=2)
+    inference.run_interactive(test_batch.cpu().numpy(), n_steps=2)
     
     print("\nTesting autonomous mode (2 steps)...")
-    inference.run_autonomous(test_batch.numpy(), n_steps=2)
+    inference.run_autonomous(test_batch.cpu().numpy(), n_steps=2)
     
     print("\nAll tests completed successfully!")
 
