@@ -58,10 +58,10 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS, devi
             mask_ratio = torch.rand(1).item() * 0.5 + 0.5
             mask = torch.rand_like(tokens[:, :-1].float()) < mask_ratio
             
-            # Predict next tokens
-            logits = model(tokens[:, :-1], actions)  # Removed mask from forward call
+            # Predict next tokens using only tokens and actions
+            logits = model(tokens[:, :-1], actions)
             
-            # Apply mask after prediction
+            # Apply mask to both predictions and targets
             target_tokens = tokens[:, 1:][mask]
             pred_tokens = logits[mask]
             
