@@ -49,7 +49,11 @@ class LAMDecoder(nn.Module):
         # Add action embeddings
         x = x + actions.unsqueeze(1)
         x = self.transformer(x)
-        return self.output(x.mean(dim=1))  # Average over sequence dimension
+        x = self.output(x.mean(dim=1))  # Average over sequence dimension
+        
+        # Reshape to match target frame dimensions [b, h, w]
+        x = x.reshape(-1, 64, 64)
+        return x
 
 class LAM(nn.Module):
     def __init__(self, dim=256, n_heads=4, n_layers=4):
@@ -77,14 +81,14 @@ class LAM(nn.Module):
         # Reshape features back to include frame dimension
         features = features.reshape(b, t+1, -1, features.size(-1))  # [b, f, n, d]
         
-        # Project to action space
+        # Project to action space (average over patches)
         actions_continuous = self.action_proj(features[:, :-1].mean(dim=2))  # [b, t, d]
         
         # Quantize actions
         actions_quantized, indices = self.quantizer(actions_continuous)
         
-        # Decode for training
-        reconstructed = self.decoder(features[:, :-1], actions_quantized)  # Use all but last frame features
+        # Decode for training (use last frame's actions)
+        reconstructed = self.decoder(features[:, :-1], actions_quantized[:, -1])  # Use all but last frame features
         
         return reconstructed, actions_quantized, indices
     
