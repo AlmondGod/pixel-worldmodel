@@ -49,17 +49,23 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS, devi
             # Get tokens from VQVAE
             with torch.no_grad():
                 _, tokens = vqvae(batch)
-                prev_frames = batch[:, :-1]
-                next_frames = batch[:, 1:]
+                # Split into previous and next frames
+                prev_frames = batch[:, :-1]  # [B, T-1, H, W]
+                next_frames = batch[:, 1:]   # [B, T-1, H, W]
                 actions = lam.infer_actions(prev_frames, next_frames)
             
             # Create random masks
             mask_ratio = torch.rand(1).item() * 0.5 + 0.5
-            mask = torch.rand_like(tokens.float()) < mask_ratio
+            mask = torch.rand_like(tokens[:, :-1].float()) < mask_ratio
             
             # Predict next tokens
-            logits = model(tokens[:, :-1], actions, mask)
-            loss = F.cross_entropy(logits, tokens[:, 1:][mask])
+            logits = model(tokens[:, :-1], actions)  # Removed mask from forward call
+            
+            # Apply mask after prediction
+            target_tokens = tokens[:, 1:][mask]
+            pred_tokens = logits[mask]
+            
+            loss = F.cross_entropy(pred_tokens, target_tokens)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
