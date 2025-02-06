@@ -40,11 +40,14 @@ class LAMDecoder(nn.Module):
         self.output = nn.Linear(dim, 64*64)  # Reconstruct frame
         
     def forward(self, x, actions):
-        # Reshape if needed (b, f, n, d) -> (b*f, n, d)
+        # x shape: [b, f, n, d] or [b*f, n, d]
+        # actions shape: [b, d]
+        
         if len(x.shape) == 4:
             b, f, n, d = x.shape
             x = x.reshape(b*f, n, d)
-            actions = actions.reshape(b*f, d)
+            # Expand actions to match number of frames
+            actions = actions.unsqueeze(1).expand(b, f, d).reshape(b*f, d)
         
         # Add action embeddings
         x = x + actions.unsqueeze(1)
@@ -76,16 +79,17 @@ class LAM(nn.Module):
         # Encode all frames
         b, t, h, w = frames.shape
         all_frames = torch.cat([frames, next_frames.unsqueeze(1)], dim=1)
-        features = self.encoder(all_frames)  # [b*f, n, d]
+        features = self.encoder(all_frames)  # [b*(t+1), n, d]
         
         # Reshape features back to include frame dimension
-        features = features.reshape(b, t+1, -1, features.size(-1))  # [b, f, n, d]
+        features = features.reshape(b, t+1, -1, features.size(-1))  # [b, t+1, n, d]
         
         # Project to action space (average over patches)
         actions_continuous = self.action_proj(features[:, :-1].mean(dim=2))  # [b, t, d]
         
         # Quantize actions
-        actions_quantized, indices = self.quantizer(actions_continuous)
+        actions_quantized, indices = self.quantizer(actions_continuous.reshape(-1, actions_continuous.size(-1)))
+        actions_quantized = actions_quantized.reshape(b, t, -1)
         
         # Decode for training (use last frame's actions)
         reconstructed = self.decoder(features[:, :-1], actions_quantized[:, -1])  # Use all but last frame features
@@ -97,6 +101,7 @@ class LAM(nn.Module):
         with torch.no_grad():
             all_frames = torch.cat([frames, next_frames.unsqueeze(1)], dim=1)
             features = self.encoder(all_frames)
-            actions_continuous = self.action_proj(features[:, :-1])
-            _, indices = self.quantizer(actions_continuous)
+            features = features.reshape(frames.size(0), -1, features.size(1), features.size(2))
+            actions_continuous = self.action_proj(features[:, :-1].mean(dim=2))
+            _, indices = self.quantizer(actions_continuous.reshape(-1, actions_continuous.size(-1)))
         return indices 
