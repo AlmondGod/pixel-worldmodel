@@ -40,10 +40,16 @@ class LAMDecoder(nn.Module):
         self.output = nn.Linear(dim, 64*64)  # Reconstruct frame
         
     def forward(self, x, actions):
+        # Reshape if needed (b, f, n, d) -> (b*f, n, d)
+        if len(x.shape) == 4:
+            b, f, n, d = x.shape
+            x = x.reshape(b*f, n, d)
+            actions = actions.reshape(b*f, d)
+        
         # Add action embeddings
         x = x + actions.unsqueeze(1)
         x = self.transformer(x)
-        return self.output(x)
+        return self.output(x.mean(dim=1))  # Average over sequence dimension
 
 class LAM(nn.Module):
     def __init__(self, dim=256, n_heads=4, n_layers=4):
@@ -66,16 +72,19 @@ class LAM(nn.Module):
         # Encode all frames
         b, t, h, w = frames.shape
         all_frames = torch.cat([frames, next_frames.unsqueeze(1)], dim=1)
-        features = self.encoder(all_frames)
+        features = self.encoder(all_frames)  # [b*f, n, d]
+        
+        # Reshape features back to include frame dimension
+        features = features.reshape(b, t+1, -1, features.size(-1))  # [b, f, n, d]
         
         # Project to action space
-        actions_continuous = self.action_proj(features[:, :-1])  # Exclude last frame
+        actions_continuous = self.action_proj(features[:, :-1].mean(dim=2))  # [b, t, d]
         
         # Quantize actions
         actions_quantized, indices = self.quantizer(actions_continuous)
         
         # Decode for training
-        reconstructed = self.decoder(features[:, :-1], actions_quantized)
+        reconstructed = self.decoder(features[:, :-1], actions_quantized)  # Use all but last frame features
         
         return reconstructed, actions_quantized, indices
     

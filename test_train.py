@@ -77,9 +77,9 @@ def main():
         print(f"\nQuick training for {args.train_epochs} epochs...")
         
         print("\nTraining VQVAE...")
-        vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4)
-        train_vqvae(vqvae, dataloader, vqvae_optim, epochs=args.train_epochs, device=device, verbose=True)
-        torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
+        # vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4)
+        # train_vqvae(vqvae, dataloader, vqvae_optim, epochs=args.train_epochs, device=device, verbose=True)
+        # torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
         
         print("\nTraining LAM...")
         lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4)
