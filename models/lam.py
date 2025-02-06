@@ -103,9 +103,16 @@ class LAM(nn.Module):
         return reconstructed, actions_quantized, indices
     
     def infer_actions(self, frames, next_frames):
-        """Get only the quantized actions for a sequence."""
+        """Get only the quantized actions for a sequence.
+        Args:
+            frames: [batch, time, height, width] Previous frames
+            next_frames: [batch, time, height, width] Next frames
+        Returns:
+            indices: Action indices
+        """
         with torch.no_grad():
-            all_frames = torch.cat([frames, next_frames.unsqueeze(1)], dim=1)
+            # No need to unsqueeze next_frames since it's already [B, T, H, W]
+            all_frames = torch.cat([frames, next_frames], dim=1)
             features = self.encoder(all_frames)
             features = features.reshape(frames.size(0), -1, features.size(1), features.size(2))
             actions_continuous = self.action_proj(features[:, :-1].mean(dim=2))
