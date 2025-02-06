@@ -43,6 +43,8 @@ class LAMDecoder(nn.Module):
         # x shape: [b, f, n, d] or [b*f, n, d]
         # actions shape: [b, d]
         
+        original_batch_size = actions.size(0)
+        
         if len(x.shape) == 4:
             b, f, n, d = x.shape
             x = x.reshape(b*f, n, d)
@@ -55,7 +57,7 @@ class LAMDecoder(nn.Module):
         x = self.output(x.mean(dim=1))  # Average over sequence dimension
         
         # Reshape to match target frame dimensions [b, h, w]
-        x = x.reshape(-1, 64, 64)
+        x = x.reshape(original_batch_size, 64, 64)  # Use original batch size
         return x
 
 class LAM(nn.Module):
@@ -92,7 +94,11 @@ class LAM(nn.Module):
         actions_quantized = actions_quantized.reshape(b, t, -1)
         
         # Decode for training (use last frame's actions)
-        reconstructed = self.decoder(features[:, :-1], actions_quantized[:, -1])  # Use all but last frame features
+        # Only pass the batch's worth of features and actions
+        reconstructed = self.decoder(
+            features[:, -2:-1],  # Use only the last frame's features [b, 1, n, d]
+            actions_quantized[:, -1]  # Use only the last frame's actions [b, d]
+        )
         
         return reconstructed, actions_quantized, indices
     
