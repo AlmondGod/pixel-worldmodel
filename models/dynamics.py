@@ -10,12 +10,13 @@ class MaskGITDynamics(nn.Module):
         dim=256,
         n_layers=6,
         n_heads=4,
-        max_seq_len=256  # 16x16 tokens
+        max_seq_len=256,  # 16x16 tokens
+        n_actions=8  # Number of possible actions
     ):
         super().__init__()
         
         self.token_embedding = nn.Embedding(n_codes, dim)
-        self.action_embedding = nn.Linear(256, dim)  # Project actions to model dimension
+        self.action_embedding = nn.Embedding(n_actions, dim)
         self.position_embedding = nn.Parameter(torch.randn(1, max_seq_len, dim))
         
         self.transformer = nn.TransformerEncoder(
@@ -32,14 +33,14 @@ class MaskGITDynamics(nn.Module):
         
     def forward(self, tokens, actions, mask=None):
         # tokens: [batch, seq_len]
-        # actions: [batch, action_dim]
+        # actions: [batch] action indices
         # mask: [batch, seq_len] boolean mask of tokens to predict
         
         x = self.token_embedding(tokens)
         x = x + self.position_embedding[:, :x.size(1)]
         
         # Add action embeddings
-        action_emb = self.action_embedding(actions)
+        action_emb = self.action_embedding(actions)  # [batch, dim]
         x = x + action_emb.unsqueeze(1)  # Broadcast action embedding across sequence
         
         # Apply transformer

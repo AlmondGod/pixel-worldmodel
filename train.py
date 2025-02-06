@@ -53,6 +53,8 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS, devi
                 prev_frames = batch[:, :-1]  # [B, T-1, H, W]
                 next_frames = batch[:, 1:]   # [B, T-1, H, W]
                 actions = lam.infer_actions(prev_frames, next_frames)
+                # Take only one action per sequence since we're predicting next frame
+                actions = actions.reshape(batch.size(0), -1)[:, 0]  # [B]
             
             # Create random masks
             mask_ratio = torch.rand(1).item() * 0.5 + 0.5

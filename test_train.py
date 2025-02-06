@@ -82,9 +82,9 @@ def main():
         # torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
         
         print("\nTraining LAM...")
-        lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4)
-        train_lam(lam, dataloader, lam_optim, epochs=args.train_epochs, device=device)
-        torch.save(lam.state_dict(), SAVE_DIR / "lam.pth")
+        # lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4)
+        # train_lam(lam, dataloader, lam_optim, epochs=args.train_epochs, device=device)
+        # torch.save(lam.state_dict(), SAVE_DIR / "lam.pth")
         
         print("\nTraining Dynamics...")
         dynamics_optim = torch.optim.AdamW(dynamics.parameters(), lr=3e-4)
