@@ -25,9 +25,9 @@ class WorldModelInference:
         self.dynamics = MaskGITDynamics().to(device)
         
         # Load weights
-        self.vqvae.load_state_dict(torch.load(vqvae_path, map_location=device))
-        self.lam.load_state_dict(torch.load(lam_path, map_location=device))
-        self.dynamics.load_state_dict(torch.load(dynamics_path, map_location=device))
+        self.vqvae.load_state_dict(torch.load(vqvae_path, map_location=device, weights_only=True))
+        self.lam.load_state_dict(torch.load(lam_path, map_location=device, weights_only=True))
+        self.dynamics.load_state_dict(torch.load(dynamics_path, map_location=device, weights_only=True))
         
         # Set to eval mode
         self.vqvae.eval()

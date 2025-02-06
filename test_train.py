@@ -100,15 +100,14 @@ def main():
         device=device
     )
     
-    # Move test batch to device for inference
-    test_batch = test_batch.to(device)
+    # Prepare test data - ensure it's in the right format
+    test_frames = test_batch[0].cpu().numpy()  # Take first sequence only
     
-    # Test both interactive and autonomous modes with small number of steps
     print("\nTesting interactive mode (2 steps)...")
-    inference.run_interactive(test_batch.cpu().numpy(), n_steps=2)
+    inference.run_interactive(test_frames, n_steps=2)
     
     print("\nTesting autonomous mode (2 steps)...")
-    inference.run_autonomous(test_batch.cpu().numpy(), n_steps=2)
+    inference.run_autonomous(test_frames, n_steps=2)
     
     print("\nAll tests completed successfully!")
 

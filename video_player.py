@@ -20,6 +20,10 @@ class VideoPlayer:
 
     def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
         """Convert quantized frame to displayable RGB image."""
+        # Ensure frame is 2D (height x width)
+        if len(frame.shape) > 2:
+            frame = frame.reshape(64, 64)  # Assuming 64x64 is our target size
+            
         # Normalize to 0-255 range
         frame_normalized = (frame * (255 / (frame.max() or 1))).astype(np.uint8)
         
