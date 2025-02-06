@@ -17,30 +17,38 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS):
+def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verbose=False):
+    """
+    Train VQVAE model
+    Args:
+        verbose: If True, print loss for every batch (for debugging)
+    """
     model.train()
     for epoch in range(epochs):
         total_loss = 0
         for batch in dataloader:
+            batch = batch.to(device)  # Move batch to device
             optimizer.zero_grad()
             recon, _ = model(batch)
             loss = F.mse_loss(recon, batch)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+            if verbose:
+                print(f"Batch loss: {loss.item():.4f}")
         print(f"Epoch {epoch}, Loss: {total_loss/len(dataloader):.4f}")
 
-def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS):
+def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS, device="cuda"):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
         for batch in dataloader:
+            batch = batch.to(device)  # Move batch to device
             optimizer.zero_grad()
             
             # Get tokens from VQVAE
             with torch.no_grad():
                 _, tokens = vqvae(batch)
-                # Get actions between frames
                 prev_frames = batch[:, :-1]
                 next_frames = batch[:, 1:]
                 actions = lam.infer_actions(prev_frames, next_frames)
@@ -50,18 +58,19 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS):
             mask = torch.rand_like(tokens.float()) < mask_ratio
             
             # Predict next tokens
-            logits = model(tokens[:, :-1], actions, mask)  # Use actions as conditioning
+            logits = model(tokens[:, :-1], actions, mask)
             loss = F.cross_entropy(logits, tokens[:, 1:][mask])
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
         print(f"Epoch {epoch}, Loss: {total_loss/len(dataloader):.4f}")
 
-def train_lam(model, dataloader, optimizer, epochs=EPOCHS):
+def train_lam(model, dataloader, optimizer, epochs=EPOCHS, device="cuda"):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
         for batch in dataloader:
+            batch = batch.to(device)  # Move batch to device
             optimizer.zero_grad()
             
             # Split into previous frames and next frame

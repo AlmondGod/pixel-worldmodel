@@ -78,29 +78,17 @@ def main():
         
         print("\nTraining VQVAE...")
         vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4)
-        # Move data to device in the training loop
-        def train_loop(model, dataloader, optimizer, epochs):
-            for epoch in range(epochs):
-                for batch in dataloader:
-                    batch = batch.to(device)  # Move batch to device
-                    optimizer.zero_grad()
-                    recon, _ = model(batch)
-                    loss = F.mse_loss(recon, batch)
-                    loss.backward()
-                    optimizer.step()
-                    print(f"Batch loss: {loss.item():.4f}")
-        
-        train_loop(vqvae, dataloader, vqvae_optim, args.train_epochs)
+        train_vqvae(vqvae, dataloader, vqvae_optim, epochs=args.train_epochs, device=device, verbose=True)
         torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
         
         print("\nTraining LAM...")
         lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4)
-        train_lam(lam, dataloader, lam_optim, epochs=args.train_epochs)
+        train_lam(lam, dataloader, lam_optim, epochs=args.train_epochs, device=device)
         torch.save(lam.state_dict(), SAVE_DIR / "lam.pth")
         
         print("\nTraining Dynamics...")
         dynamics_optim = torch.optim.AdamW(dynamics.parameters(), lr=3e-4)
-        train_dynamics(dynamics, vqvae, lam, dataloader, dynamics_optim, epochs=args.train_epochs)
+        train_dynamics(dynamics, vqvae, lam, dataloader, dynamics_optim, epochs=args.train_epochs, device=device)
         torch.save(dynamics.state_dict(), SAVE_DIR / "dynamics.pth")
     
     # Test inference using WorldModelInference
