@@ -17,6 +17,7 @@ class VideoPlayer:
             display_size: Size of the display window (square)
         """
         self.display_size = display_size
+        self.window_name = 'Video'
 
     def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
         """Convert quantized frame to displayable RGB image."""
@@ -34,6 +35,26 @@ class VideoPlayer:
         # Convert to RGB
         frame_rgb = cv2.cvtColor(frame_large, cv2.COLOR_GRAY2BGR)
         return frame_rgb
+
+    def display_frame(self, frame: np.ndarray, wait_time: int = 1) -> int:
+        """Display a single frame and return the key pressed."""
+        # Debug prints
+        print(f"\nDisplay debug:")
+        print(f"Input frame shape: {frame.shape}")
+        print(f"Frame min/max: {frame.min():.3f}/{frame.max():.3f}")
+        print(f"Frame mean/std: {frame.mean():.3f}/{frame.std():.3f}")
+        
+        display_frame = self._prepare_frame(frame)
+        print(f"Prepared frame shape: {display_frame.shape}")
+        print(f"Prepared frame min/max: {display_frame.min()}/{display_frame.max()}")
+        
+        cv2.imshow(self.window_name, display_frame)
+        key = cv2.waitKey(wait_time) & 0xFF
+        return key
+
+    def cleanup(self):
+        """Clean up OpenCV windows."""
+        cv2.destroyAllWindows()
 
     def play_sequence(self, frames: List[np.ndarray], delay: int = 100):
         """

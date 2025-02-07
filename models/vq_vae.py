@@ -47,10 +47,20 @@ class STTransformerEncoder(nn.Module):
         return x
 
 class VectorQuantizer(nn.Module):
-    def __init__(self, n_codes=256, code_dim=16):
+    def __init__(self, n_codes=64, code_dim=16, commitment_weight=1.0):
         super().__init__()
+        self.n_codes = n_codes
+        self.code_dim = code_dim
+        self.commitment_weight = commitment_weight
+        
+        # Initialize embedding with Xavier/Glorot initialization
         self.embedding = nn.Embedding(n_codes, code_dim)
-        self.embedding.weight.data.uniform_(-1./n_codes, 1./n_codes)
+        nn.init.xavier_uniform_(self.embedding.weight)
+        
+        # Keep track of code usage
+        register_buffer = getattr(self, 'register_buffer', None)
+        if register_buffer is not None:
+            self.register_buffer('code_usage', torch.zeros(n_codes))
         
     def forward(self, z):
         # z shape: [batch, tokens, code_dim]
@@ -64,10 +74,29 @@ class VectorQuantizer(nn.Module):
         min_encoding_indices = torch.argmin(d, dim=-1)
         z_q = self.embedding(min_encoding_indices)
         
+        # Update code usage statistics during training
+        if self.training:
+            with torch.no_grad():
+                code_usage = torch.bincount(min_encoding_indices.view(-1), 
+                                         minlength=self.n_codes).float()
+                if hasattr(self, 'code_usage'):
+                    self.code_usage = 0.99 * self.code_usage + 0.01 * code_usage
+        
+        # Compute losses
+        commitment_loss = F.mse_loss(z_q.detach(), z)
+        codebook_loss = F.mse_loss(z_q, z.detach())
+        
         # Straight through estimator
         z_q = z + (z_q - z).detach()
         
-        return z_q, min_encoding_indices
+        # Calculate perplexity (measure of codebook usage)
+        with torch.no_grad():
+            code_probs = torch.bincount(min_encoding_indices.view(-1), 
+                                      minlength=self.n_codes).float()
+            code_probs = code_probs / code_probs.sum()
+            perplexity = torch.exp(-torch.sum(code_probs * torch.log(code_probs + 1e-10)))
+        
+        return z_q, min_encoding_indices, commitment_loss * self.commitment_weight + codebook_loss, perplexity
 
 class VQVAE(nn.Module):
     def __init__(
@@ -76,14 +105,15 @@ class VQVAE(nn.Module):
         n_heads=4,
         n_layers=4,
         patch_size=4,
-        n_codes=256,
-        code_dim=16
+        n_codes=64,
+        code_dim=16,
+        commitment_weight=1.0
     ):
         super().__init__()
         
         self.encoder = STTransformerEncoder(dim, n_heads, n_layers, patch_size)
         self.pre_quantize = nn.Linear(dim, code_dim)
-        self.quantizer = VectorQuantizer(n_codes, code_dim)
+        self.quantizer = VectorQuantizer(n_codes, code_dim, commitment_weight)
         
         self.decoder = nn.Sequential(
             nn.Linear(code_dim, dim),
@@ -105,11 +135,11 @@ class VQVAE(nn.Module):
         z = self.pre_quantize(z)  # [b*f, n, code_dim]
         
         # Quantize
-        z_q, indices = self.quantizer(z)
+        z_q, indices, vq_loss, perplexity = self.quantizer(z)
         
         # Decode
         recon = self.decoder(z_q)
         recon = rearrange(recon, '(b f) (h w) (p1 p2) -> b f (h p1) (w p2)',
                          f=x.size(1), h=16, w=16, p1=4, p2=4)
         
-        return recon, indices 
+        return recon, indices, vq_loss, perplexity 

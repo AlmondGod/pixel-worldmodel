@@ -13,6 +13,19 @@ import torch.nn.functional as F
 SAVE_DIR = Path("saved_models")
 BATCH_SIZE = 4   # Small batch size for testing
 
+def check_model_weights(model, name):
+    """Check if model weights are random or trained."""
+    total_params = 0
+    zero_params = 0
+    for param in model.parameters():
+        total_params += param.numel()
+        zero_params += (param == 0).sum().item()
+    
+    print(f"\n{name} model stats:")
+    print(f"Total parameters: {total_params}")
+    print(f"Zero parameters: {zero_params}")
+    print(f"Non-zero ratio: {(total_params - zero_params) / total_params:.2%}")
+
 def main():
     # Parse args
     parser = argparse.ArgumentParser()
@@ -87,9 +100,9 @@ def main():
         # torch.save(lam.state_dict(), SAVE_DIR / "lam.pth")
         
         print("\nTraining Dynamics...")
-        dynamics_optim = torch.optim.AdamW(dynamics.parameters(), lr=3e-4)
-        train_dynamics(dynamics, vqvae, lam, dataloader, dynamics_optim, epochs=args.train_epochs, device=device)
-        torch.save(dynamics.state_dict(), SAVE_DIR / "dynamics.pth")
+        # dynamics_optim = torch.optim.AdamW(dynamics.parameters(), lr=3e-4)
+        # train_dynamics(dynamics, vqvae, lam, dataloader, dynamics_optim, epochs=args.train_epochs, device=device)
+        # torch.save(dynamics.state_dict(), SAVE_DIR / "dynamics.pth")
     
     # Test inference using WorldModelInference
     print("\nTesting inference pipeline...")
@@ -103,13 +116,19 @@ def main():
     # Prepare test data - ensure it's in the right format
     test_frames = test_batch[0].cpu().numpy()  # Take first sequence only
     
-    print("\nTesting interactive mode (2 steps)...")
-    inference.run_interactive(test_frames, n_steps=2)
+    print("\nTesting interactive mode (20 steps)...")
+    inference.run_interactive(test_frames, n_steps=20)
     
-    print("\nTesting autonomous mode (2 steps)...")
-    inference.run_autonomous(test_frames, n_steps=2)
+    print("\nTesting autonomous mode (20 steps)...")
+    inference.run_autonomous(test_frames, n_steps=20)
     
     print("\nAll tests completed successfully!")
+
+    # Add to main() after loading models:
+    print("\nChecking model weights...")
+    check_model_weights(vqvae, "VQVAE")
+    check_model_weights(lam, "LAM")
+    check_model_weights(dynamics, "Dynamics")
 
 if __name__ == "__main__":
     main() 

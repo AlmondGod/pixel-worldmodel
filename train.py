@@ -6,6 +6,7 @@ from video_dataset import VideoFrameDataset, convert_video_to_training_data
 from torch.nn import functional as F
 from pathlib import Path
 import argparse
+import numpy as np
 
 EPOCHS = 50
 SAVE_DIR = Path("saved_models")
@@ -19,54 +20,88 @@ def parse_args():
 
 def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verbose=False):
     """
-    Train VQVAE model
+    Train VQVAE model with codebook usage monitoring
     Args:
         verbose: If True, print loss for every batch (for debugging)
     """
     model.train()
     for epoch in range(epochs):
-        total_loss = 0
+        total_recon_loss = 0
+        total_vq_loss = 0
+        avg_perplexity = 0
+        n_batches = 0
+        
         for batch in dataloader:
-            batch = batch.to(device)  # Move batch to device
+            batch = batch.to(device)
             optimizer.zero_grad()
-            recon, _ = model(batch)
-            loss = F.mse_loss(recon, batch)
+            
+            # Forward pass
+            recon, _, vq_loss, perplexity = model(batch)
+            
+            # Compute reconstruction loss
+            recon_loss = F.mse_loss(recon, batch)
+            
+            # Total loss is reconstruction loss plus VQ losses
+            loss = recon_loss + vq_loss
+            
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
+            
+            # Track metrics
+            total_recon_loss += recon_loss.item()
+            total_vq_loss += vq_loss.item()
+            avg_perplexity += perplexity.item()
+            n_batches += 1
+            
             if verbose:
-                print(f"Batch loss: {loss.item():.4f}")
-        print(f"Epoch {epoch}, Loss: {total_loss/len(dataloader):.4f}")
+                print(f"Batch losses - Recon: {recon_loss.item():.4f}, VQ: {vq_loss.item():.4f}, "
+                      f"Perplexity: {perplexity.item():.1f}")
+        
+        # Print epoch statistics
+        print(f"Epoch {epoch}")
+        print(f"  Reconstruction Loss: {total_recon_loss/n_batches:.4f}")
+        print(f"  VQ Loss: {total_vq_loss/n_batches:.4f}")
+        print(f"  Average Perplexity: {avg_perplexity/n_batches:.1f}")
+        
+        # Print codebook usage statistics
+        if hasattr(model.quantizer, 'code_usage'):
+            code_usage = model.quantizer.code_usage.cpu().numpy()
+            active_codes = (code_usage > 0).sum()
+            print(f"  Active Codes: {active_codes}/{model.quantizer.n_codes}")
+            if verbose:
+                print("  Most used codes:", np.argsort(-code_usage)[:10])
+                print("  Usage values:", np.sort(code_usage)[-10:])
 
 def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS, device="cuda"):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
+        n_batches = 0
+        
         for batch in dataloader:
-            batch = batch.to(device)  # Move batch to device
+            batch = batch.to(device)
             optimizer.zero_grad()
             
             # Get tokens from VQVAE
             with torch.no_grad():
-                _, tokens = vqvae(batch)
+                _, tokens, _, _ = vqvae(batch)  # Updated to handle new return values
                 # Split into previous and next frames
                 prev_frames = batch[:, :-1]  # [B, T-1, H, W]
                 next_frames = batch[:, 1:]   # [B, T-1, H, W]
                 actions = lam.infer_actions(prev_frames, next_frames)
                 
                 # Reshape actions to match batch size
-                # Each sequence has T-1 actions, we need one per sequence
                 actions = actions.reshape(batch.size(0), -1)  # [B, (T-1)]
                 actions = actions[:, 0]  # Take first action for each sequence [B]
                 
                 # Ensure tokens and actions have same batch dimension
-                tokens = tokens[:actions.size(0)]  # Trim tokens to match action batch size
+                tokens = tokens[:actions.size(0)]
             
             # Create random masks
             mask_ratio = torch.rand(1).item() * 0.5 + 0.5
             mask = torch.rand_like(tokens[:, :-1].float()) < mask_ratio
             
-            # Predict next tokens using only tokens and actions
+            # Predict next tokens
             logits = model(tokens[:, :-1], actions)
             
             # Apply mask to both predictions and targets
@@ -76,15 +111,20 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS, devi
             loss = F.cross_entropy(pred_tokens, target_tokens)
             loss.backward()
             optimizer.step()
+            
             total_loss += loss.item()
-        print(f"Epoch {epoch}, Loss: {total_loss/len(dataloader):.4f}")
+            n_batches += 1
+            
+        print(f"Epoch {epoch}, Loss: {total_loss/n_batches:.4f}")
 
 def train_lam(model, dataloader, optimizer, epochs=EPOCHS, device="cuda"):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
+        n_batches = 0
+        
         for batch in dataloader:
-            batch = batch.to(device)  # Move batch to device
+            batch = batch.to(device)
             optimizer.zero_grad()
             
             # Split into previous frames and next frame
@@ -98,9 +138,11 @@ def train_lam(model, dataloader, optimizer, epochs=EPOCHS, device="cuda"):
             loss = F.mse_loss(reconstructed, next_frame)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
             
-        print(f"Epoch {epoch}, Loss: {total_loss/len(dataloader):.4f}")
+            total_loss += loss.item()
+            n_batches += 1
+            
+        print(f"Epoch {epoch}, Loss: {total_loss/n_batches:.4f}")
 
 def main():
     args = parse_args()
@@ -127,15 +169,15 @@ def main():
     dataset = VideoFrameDataset(data_path)
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
     
-    # Initialize models
+    # Initialize models with updated parameters
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    vqvae = VQVAE().to(device)
+    vqvae = VQVAE(n_codes=64, commitment_weight=1.0).to(device)  # Reduced codebook size
     dynamics = MaskGITDynamics().to(device)
     
-    # Training VQVAE
+    # Training VQVAE with monitoring
     print("Training VQVAE...")
     vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4, betas=(0.9, 0.9))
-    train_vqvae(vqvae, dataloader, vqvae_optim)
+    train_vqvae(vqvae, dataloader, vqvae_optim, verbose=True)
     torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
     
     # Training Dynamics
