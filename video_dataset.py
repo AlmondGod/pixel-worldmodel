@@ -32,11 +32,15 @@ class VideoFrameDataset(Dataset):
         
         # Get sequence information
         if stagger_id is not None:
-            self.sequences = self.h5_file[f'stagger_{stagger_id}']
+            if f'stagger_{stagger_id}' not in self.h5_file:
+                raise ValueError(f"Stagger {stagger_id} not found in dataset")
+            self.sequences = list(self.h5_file[f'stagger_{stagger_id}'].values())
         else:
             self.sequences = []
-            for i in range(len(self.h5_file.attrs['sequence_counts'])):
-                self.sequences.extend(self.h5_file[f'stagger_{i}'].values())
+            n_staggers = self.h5_file.attrs.get('n_staggers', 3)  # Default to 3 staggers if not specified
+            for i in range(n_staggers):
+                if f'stagger_{i}' in self.h5_file:
+                    self.sequences.extend(self.h5_file[f'stagger_{i}'].values())
     
     def __len__(self):
         return len(self.sequences)
@@ -46,7 +50,8 @@ class VideoFrameDataset(Dataset):
         return torch.from_numpy(sequence).float()
     
     def __del__(self):
-        self.h5_file.close()
+        if hasattr(self, 'h5_file'):
+            self.h5_file.close()
 
 def convert_video_to_training_data(
     video_path: str,
@@ -74,6 +79,7 @@ def convert_video_to_training_data(
         f.attrs['sequence_length'] = sequence_length
         f.attrs['source_fps'] = source_fps
         f.attrs['target_fps'] = target_fps
+        f.attrs['n_staggers'] = n_staggers
         
         # Create groups for each stagger
         stagger_groups = [f.create_group(f'stagger_{i}') for i in range(n_staggers)]
@@ -113,6 +119,12 @@ def convert_video_to_training_data(
         
         # Store final sequence counts
         f.attrs['sequence_counts'] = sequence_counts
+        
+        # Store total sequences for easier access
+        f.attrs['total_sequences'] = sum(sequence_counts)
+        
+        print(f"Processed {frame_count} frames into {sum(sequence_counts)} sequences")
+        print(f"Sequences per stagger: {sequence_counts}")
 
 def main():
     # Example usage
