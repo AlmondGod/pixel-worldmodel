@@ -8,7 +8,7 @@ from pathlib import Path
 import argparse
 import numpy as np
 
-EPOCHS = 1
+EPOCHS = 10
 SAVE_DIR = Path("saved_models")
 
 # write a parse args to take in data path
