@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from models.vq_vae import VQVAE
 from models.dynamics import MaskGITDynamics
+from models.lam import LAM
 from video_dataset import VideoFrameDataset, convert_video_to_training_data
 from torch.nn import functional as F
 from pathlib import Path
@@ -201,6 +202,7 @@ def main():
         print(f"GPU Memory available: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f}GB")
     
     vqvae = VQVAE(n_codes=64, commitment_weight=1.0).to(device)  # Reduced codebook size
+    lam = LAM().to(device)  # Initialize LAM model
     dynamics = MaskGITDynamics().to(device)
     
     # Training VQVAE with monitoring
@@ -208,6 +210,17 @@ def main():
     vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4, betas=(0.9, 0.9))
     train_vqvae(vqvae, dataloader, vqvae_optim, verbose=True)
     torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
+    
+    # Clear GPU memory before training LAM
+    if device == "cuda":
+        torch.cuda.empty_cache()
+        gc.collect()
+    
+    # Training LAM
+    print("\nTraining LAM...")
+    lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4, betas=(0.9, 0.9))
+    train_lam(lam, dataloader, lam_optim)
+    torch.save(lam.state_dict(), SAVE_DIR / "lam.pth")
     
     # Clear GPU memory before training dynamics
     if device == "cuda":
@@ -217,7 +230,7 @@ def main():
     # Training Dynamics
     print("\nTraining Dynamics...")
     dynamics_optim = torch.optim.AdamW(dynamics.parameters(), lr=3e-4, betas=(0.9, 0.9))
-    train_dynamics(dynamics, vqvae, dynamics_optim)
+    train_dynamics(dynamics, vqvae, lam, dataloader, dynamics_optim)
     torch.save(dynamics.state_dict(), SAVE_DIR / "dynamics.pth")
 
 if __name__ == "__main__":
