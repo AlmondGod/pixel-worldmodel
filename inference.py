@@ -121,9 +121,12 @@ class WorldModelInference:
             frames_tensor = torch.FloatTensor(frames).unsqueeze(0).to(self.device)
             print("\n[generate_next_frame] frames_tensor shape:", frames_tensor.shape)
             
-            # Run VQVAE forward to get tokens (assume tokens shape is (T, num_patches))
-            recon, tokens = self.vqvae(frames_tensor)
+            # Run VQVAE forward to get tokens
+            recon, tokens, _, _ = self.vqvae(frames_tensor)  # Properly unpack all 4 return values
             print("[generate_next_frame] VQVAE tokens shape:", tokens.shape)
+            
+            # Print frame change detection
+            print(f"[generate_next_frame] Input frames hash: {hash(frames.tobytes())}")
             
             # We want to generate the next frame from the last frame's tokens:
             last_frame_tokens = tokens[-1:].clone()  # shape (1, num_patches)
@@ -135,7 +138,7 @@ class WorldModelInference:
             print("[generate_next_frame] Dynamics logits shape:", logits.shape)
             
             # Sample next tokens with temperature
-            temperature = 1  # Adjust this value to control randomness (higher = more random)
+            temperature = 0.8  # Reduced temperature for less randomness
             probs = F.softmax(logits / temperature, dim=-1)
             next_tokens = torch.multinomial(probs.view(-1, probs.size(-1)), 1).view(logits.size(0), -1)
             print("[generate_next_frame] Sampled next_tokens shape:", next_tokens.shape)
@@ -149,37 +152,86 @@ class WorldModelInference:
             decoded = self.vqvae.decoder(z_q)
             print("[generate_next_frame] Decoded raw shape:", decoded.shape)
             
+            # Debug raw tensor values before any reshaping
+            print("\n[RAW TENSOR DEBUG]")
+            raw_decoded = decoded.cpu().numpy()
+            print("Raw decoded tensor stats:")
+            print(f"Shape: {raw_decoded.shape}")
+            print(f"Global min/max: {raw_decoded.min():.3f}/{raw_decoded.max():.3f}")
+
+                        
+            # Check for pattern repetition in raw tensor
+            print("\nChecking for pattern repetition...")
+            if len(raw_decoded.shape) >= 2:
+                # Take first few values from different regions
+                n_samples = 4
+                step = raw_decoded.shape[1] // n_samples
+                samples = []
+                for i in range(n_samples):
+                    idx = i * step
+                    region = raw_decoded[0, idx:idx+4]  # Take 4 values from each region
+                    samples.append(region)
+                print("\nSampling values from different regions:")
+                for i, sample in enumerate(samples):
+                    print(f"Region {i}: {sample}")
+                
+                # Check if consecutive patches are identical
+                print("\nChecking consecutive patches:")
+                for i in range(min(4, raw_decoded.shape[1]-1)):
+                    patch1 = raw_decoded[0, i]
+                    patch2 = raw_decoded[0, i+1]
+                    is_identical = np.allclose(patch1, patch2, rtol=1e-5)
+                    print(f"Patches {i} and {i+1} identical: {is_identical}")
+            
             # Debug network outputs
             self.debug_network_outputs(step, last_frame_tokens, logits, next_tokens, decoded)
             
             # Rearrange patches into image
             try:
-                # First reshape to separate patch dimensions
-                decoded = decoded.reshape(1, 256, 4, 4)
-                # Then rearrange patches to form image
-                decoded_image = rearrange(decoded, 'b (h w) p1 p2 -> b 1 (h p1) (w p2)', 
-                                       h=16, w=16, p1=4, p2=4)
-                print("[generate_next_frame] Reshaped decoded shape:", decoded.shape)
+                # The decoder outputs (batch, n_patches, patch_values)
+                # where n_patches = 16x16 = 256 (64x64 image with 4x4 patches)
+                # and patch_values = 16 (4x4 patch flattened)
+                
+                # First unflatten the patches
+                decoded = decoded.reshape(1, 16, 16, 4, 4)  # [batch, h_patches, w_patches, patch_h, patch_w]
+                print("\n[RESHAPE DEBUG]")
+                print(f"After unflatten patches: {decoded.shape}")
+                
+                # Now rearrange to form final image
+                decoded_image = decoded.permute(0, 1, 3, 2, 4).reshape(1, 1, 64, 64)
+                print(f"After final reshape: {decoded_image.shape}")
+                
+                # Verify patch independence
+                patches = decoded_image[0, 0].reshape(16, 4, 16, 4).permute(0, 2, 1, 3).reshape(256, 16)
+                n_unique_patches = len(torch.unique(patches, dim=0))
+                print(f"Number of unique 4x4 patches: {n_unique_patches}")
+                
+                print("[generate_next_frame] Reshaped decoded shape:", decoded_image.shape)
             except Exception as e:
                 print("[generate_next_frame] Error during reshape:", e)
-                decoded_image = decoded.reshape(1, 64, 64)  # fallback
+                decoded_image = decoded.reshape(1, 1, 64, 64)  # fallback
             
             print("[generate_next_frame] Decoded image shape after rearrange:", decoded_image.shape)
             
             # Extract next frame (we generated one frame)
             next_frame = decoded_image[0, 0].cpu().numpy()
+
+            #print frame
+            print(f"Next frame: {next_frame}")
             
             # Debug final frame stats before normalization
             print("[generate_next_frame] Final frame stats before normalization:")
             print(f"  Shape: {next_frame.shape}")
             print(f"  min: {next_frame.min():.3f}, max: {next_frame.max():.3f}, mean: {next_frame.mean():.3f}")
             print(f"  Unique values: {len(np.unique(next_frame))}")
+            print(f"  Frame hash: {hash(next_frame.tobytes())}")
             
             # Normalize to [0, 1]
             next_frame = (next_frame - next_frame.min()) / (next_frame.max() - next_frame.min() + 1e-8)
             
             print("[generate_next_frame] Final frame stats after normalization:")
             print(f"  min: {next_frame.min():.3f}, max: {next_frame.max():.3f}, mean: {next_frame.mean():.3f}")
+            print(f"  Frame hash: {hash(next_frame.tobytes())}")
             
             return next_frame
     
@@ -266,12 +318,12 @@ class WorldModelInference:
 
 def main():
     parser = argparse.ArgumentParser(description='World Model Inference')
-    parser.add_argument('--vqvae', type=str, default='saved_models/vqvae.pth', help='Path to VQVAE weights')
-    parser.add_argument('--lam', type=str, default='saved_models/lam.pth', help='Path to LAM weights')
-    parser.add_argument('--dynamics', type=str, default='saved_models/dynamics.pth', help='Path to Dynamics weights')
-    parser.add_argument('--video', type=str, required=True, help='Path to initial video')
+    parser.add_argument('--vqvae', type=str, default='saved_models/vqvae1.pth', help='Path to VQVAE weights')
+    parser.add_argument('--lam', type=str, default='saved_models/lam1.pth', help='Path to LAM weights')
+    parser.add_argument('--dynamics', type=str, default='saved_models/dynamics1.pth', help='Path to Dynamics weights')
+    parser.add_argument('--video', type=str, default='pong.mp4', help='Path to initial video')
     parser.add_argument('--mode', type=str, choices=['interactive', 'autonomous'], 
-                       default='interactive', help='Inference mode')
+                       default='autonomous', help='Inference mode')
     parser.add_argument('--steps', type=int, default=100, help='Number of steps to generate')
     
     args = parser.parse_args()
