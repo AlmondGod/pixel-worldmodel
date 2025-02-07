@@ -7,22 +7,25 @@ from torch.nn import functional as F
 from pathlib import Path
 import argparse
 import numpy as np
+import gc
 
 EPOCHS = 1
 SAVE_DIR = Path("saved_models")
+BATCH_SIZE = 8  # Reduced from 128
+GRADIENT_ACCUMULATION_STEPS = 16  # This gives effective batch size of 128
 
 # write a parse args to take in data path
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, default="training_data_hdf5.h5")
+    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--grad_accum_steps", type=int, default=GRADIENT_ACCUMULATION_STEPS)
     args = parser.parse_args()
     return args
 
 def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verbose=False):
     """
-    Train VQVAE model with codebook usage monitoring
-    Args:
-        verbose: If True, print loss for every batch (for debugging)
+    Train VQVAE model with codebook usage monitoring and gradient accumulation
     """
     model.train()
     for epoch in range(epochs):
@@ -30,10 +33,15 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
         total_vq_loss = 0
         avg_perplexity = 0
         n_batches = 0
+        optimizer.zero_grad()
         
-        for batch in dataloader:
+        for batch_idx, batch in enumerate(dataloader):
+            # Free up memory
+            if device == "cuda":
+                torch.cuda.empty_cache()
+                gc.collect()
+            
             batch = batch.to(device)
-            optimizer.zero_grad()
             
             # Forward pass
             recon, _, vq_loss, perplexity = model(batch)
@@ -44,8 +52,9 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
             # Total loss is reconstruction loss plus VQ losses
             loss = recon_loss + vq_loss
             
+            # Normalize loss for gradient accumulation
+            loss = loss / GRADIENT_ACCUMULATION_STEPS
             loss.backward()
-            optimizer.step()
             
             # Track metrics
             total_recon_loss += recon_loss.item()
@@ -53,12 +62,23 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
             avg_perplexity += perplexity.item()
             n_batches += 1
             
-            if verbose:
-                print(f"Batch losses - Recon: {recon_loss.item():.4f}, VQ: {vq_loss.item():.4f}, "
+            # Step optimizer after accumulating gradients
+            if (batch_idx + 1) % GRADIENT_ACCUMULATION_STEPS == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+            
+            if verbose and batch_idx % 10 == 0:
+                print(f"Batch {batch_idx}/{len(dataloader)}")
+                print(f"  Recon: {recon_loss.item():.4f}, VQ: {vq_loss.item():.4f}, "
                       f"Perplexity: {perplexity.item():.1f}")
+                
+                # Memory stats
+                if device == "cuda":
+                    print(f"  GPU Memory: {torch.cuda.memory_allocated()/1e9:.1f}GB allocated, "
+                          f"{torch.cuda.memory_reserved()/1e9:.1f}GB reserved")
         
         # Print epoch statistics
-        print(f"Epoch {epoch}")
+        print(f"\nEpoch {epoch}")
         print(f"  Reconstruction Loss: {total_recon_loss/n_batches:.4f}")
         print(f"  VQ Loss: {total_vq_loss/n_batches:.4f}")
         print(f"  Average Perplexity: {avg_perplexity/n_batches:.1f}")
@@ -167,21 +187,35 @@ def main():
     
     # Load dataset
     dataset = VideoFrameDataset(data_path)
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(dataset, 
+                          batch_size=args.batch_size,
+                          shuffle=True,
+                          num_workers=0,  # Reduce memory usage
+                          pin_memory=True)  # Faster data transfer to GPU
     
     # Initialize models with updated parameters
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Print available GPU memory
+    if device == "cuda":
+        print(f"GPU Memory available: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f}GB")
+    
     vqvae = VQVAE(n_codes=64, commitment_weight=1.0).to(device)  # Reduced codebook size
     dynamics = MaskGITDynamics().to(device)
     
     # Training VQVAE with monitoring
-    print("Training VQVAE...")
+    print("\nTraining VQVAE...")
     vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4, betas=(0.9, 0.9))
     train_vqvae(vqvae, dataloader, vqvae_optim, verbose=True)
     torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
     
+    # Clear GPU memory before training dynamics
+    if device == "cuda":
+        torch.cuda.empty_cache()
+        gc.collect()
+    
     # Training Dynamics
-    print("Training Dynamics...")
+    print("\nTraining Dynamics...")
     dynamics_optim = torch.optim.AdamW(dynamics.parameters(), lr=3e-4, betas=(0.9, 0.9))
     train_dynamics(dynamics, vqvae, dynamics_optim)
     torch.save(dynamics.state_dict(), SAVE_DIR / "dynamics.pth")
