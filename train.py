@@ -13,8 +13,8 @@ from datetime import datetime
 
 EPOCHS = 100
 SAVE_DIR = Path("saved_models")
-BATCH_SIZE = 32  # Reduced from 128
-GRADIENT_ACCUMULATION_STEPS = 16  # This gives effective batch size of 128
+BATCH_SIZE = 8  # Reduced from 32
+GRADIENT_ACCUMULATION_STEPS = 4  # Reduced from 16
 
 # write a parse args to take in data path
 def parse_args():
