@@ -9,6 +9,7 @@ from pathlib import Path
 import argparse
 import numpy as np
 import gc
+from datetime import datetime
 
 EPOCHS = 100
 SAVE_DIR = Path("saved_models")
@@ -23,6 +24,11 @@ def parse_args():
     parser.add_argument("--grad_accum_steps", type=int, default=GRADIENT_ACCUMULATION_STEPS)
     args = parser.parse_args()
     return args
+
+def get_timestamped_filename(base_name):
+    """Generate a filename with timestamp"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{base_name}_{timestamp}.pth"
 
 def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verbose=False):
     """
@@ -209,7 +215,7 @@ def main():
     print("\nTraining VQVAE...")
     vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4, betas=(0.9, 0.9))
     train_vqvae(vqvae, dataloader, vqvae_optim, verbose=True)
-    torch.save(vqvae.state_dict(), SAVE_DIR / "vqvae.pth")
+    torch.save(vqvae.state_dict(), SAVE_DIR / get_timestamped_filename("vqvae"))
     
     # Clear GPU memory before training LAM
     if device == "cuda":
@@ -220,7 +226,7 @@ def main():
     print("\nTraining LAM...")
     lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4, betas=(0.9, 0.9))
     train_lam(lam, dataloader, lam_optim)
-    torch.save(lam.state_dict(), SAVE_DIR / "lam.pth")
+    torch.save(lam.state_dict(), SAVE_DIR / get_timestamped_filename("lam"))
     
     # Clear GPU memory before training dynamics
     if device == "cuda":
@@ -231,7 +237,7 @@ def main():
     print("\nTraining Dynamics...")
     dynamics_optim = torch.optim.AdamW(dynamics.parameters(), lr=3e-4, betas=(0.9, 0.9))
     train_dynamics(dynamics, vqvae, lam, dataloader, dynamics_optim)
-    torch.save(dynamics.state_dict(), SAVE_DIR / "dynamics.pth")
+    torch.save(dynamics.state_dict(), SAVE_DIR / get_timestamped_filename("dynamics"))
 
 if __name__ == "__main__":
     main() 
