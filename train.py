@@ -57,7 +57,7 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
         n_batches = 0
         
         for batch_idx, batch in enumerate(dataloader):
-            # Free up memory
+            # Move batch to GPU and clear cache
             if device == "cuda":
                 torch.cuda.empty_cache()
                 gc.collect()
@@ -66,19 +66,22 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
             optimizer.zero_grad()
             
             # Forward pass
-            recon, _, vq_loss, perplexity = model(batch)
+            with torch.cuda.amp.autocast('cuda'):  # Use mixed precision
+                recon, indices, vq_loss, perplexity = model(batch)
+                
+                # Compute reconstruction loss with L1 component
+                recon_loss = 0.9 * F.mse_loss(recon, batch) + 0.1 * F.l1_loss(recon, batch)
+                
+                # Total loss is reconstruction loss plus VQ losses
+                loss = recon_loss + vq_loss
+                
+                # Normalize loss for gradient accumulation
+                loss = loss / GRADIENT_ACCUMULATION_STEPS
             
-            # Compute reconstruction loss with L1 component
-            recon_loss = 0.9 * F.mse_loss(recon, batch) + 0.1 * F.l1_loss(recon, batch)
-            
-            # Total loss is reconstruction loss plus VQ losses
-            loss = recon_loss + vq_loss
-            
-            # Normalize loss for gradient accumulation
-            loss = loss / GRADIENT_ACCUMULATION_STEPS
+            # Backward pass
             loss.backward()
             
-            # Track metrics
+            # Track metrics before clearing memory
             total_recon_loss += recon_loss.item()
             total_vq_loss += vq_loss.item()
             avg_perplexity += perplexity.item()
@@ -105,9 +108,11 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
                     print(f"  GPU Memory: {torch.cuda.memory_allocated()/1e9:.1f}GB allocated, "
                           f"{torch.cuda.memory_reserved()/1e9:.1f}GB reserved")
             
-            del recon_loss, vq_loss, loss
+            # Clear all intermediate tensors
+            del recon, indices, vq_loss, perplexity, recon_loss, loss, batch
             if device == "cuda":
                 torch.cuda.empty_cache()
+                gc.collect()
         
         # Print epoch statistics
         print(f"\nEpoch {epoch}")
@@ -127,6 +132,11 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
         # Save checkpoint every CHECKPOINT_EVERY epochs and at the final epoch
         if (epoch + 1) % CHECKPOINT_EVERY == 0 or epoch == epochs - 1:
             save_checkpoint(model, "vqvae", epoch + 1, save_dir)
+            
+        # Clear memory at end of epoch
+        if device == "cuda":
+            torch.cuda.empty_cache()
+            gc.collect()
 
 def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cuda"):
     model.train()
@@ -236,8 +246,10 @@ def main():
     dataloader = DataLoader(dataset, 
                           batch_size=args.batch_size,
                           shuffle=True,
-                          num_workers=0,  # Reduce memory usage
-                          pin_memory=True)  # Faster data transfer to GPU
+                          num_workers=0,  # No multiprocessing to reduce memory
+                          pin_memory=False,  # Disable pinned memory
+                          persistent_workers=False,  # Disable persistent workers
+                          prefetch_factor=2)  # Reduce prefetching
     
     # Initialize models with updated parameters
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
