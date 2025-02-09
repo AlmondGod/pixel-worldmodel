@@ -65,20 +65,22 @@ class VectorQuantizer(nn.Module):
         
     def _update_codebook(self, encodings, z):
         """Update codebook using EMA updates"""
-        batch_size = encodings.shape[0]
+        # Flatten batch and token dimensions
+        encodings_one_hot = F.one_hot(encodings, self.n_codes).float()
+        encodings_one_hot = encodings_one_hot.reshape(-1, self.n_codes)  # [batch*tokens, n_codes]
+        z = z.reshape(-1, z.size(-1))  # [batch*tokens, code_dim]
         
         # Calculate new cluster sizes
-        encodings_one_hot = F.one_hot(encodings, self.n_codes).float()
         cluster_size = encodings_one_hot.sum(0)
         
         # EMA update for cluster sizes
         self.ema_cluster_size = self.ema_cluster_size * self.decay + \
-                               (1 - self.decay) * cluster_size
+                            (1 - self.decay) * cluster_size
         
         # Laplace smoothing
         n = self.ema_cluster_size.sum()
         cluster_size = (self.ema_cluster_size + self.epsilon) / \
-                      (n + self.n_codes * self.epsilon) * n
+                    (n + self.n_codes * self.epsilon) * n
         
         # Calculate new embeddings
         dw = torch.matmul(encodings_one_hot.t(), z)

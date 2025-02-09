@@ -11,9 +11,9 @@ import numpy as np
 import gc
 from datetime import datetime
 
-EPOCHS = 100
+EPOCHS = 1
 SAVE_DIR = Path("saved_models")
-BATCH_SIZE = 8  # Reduced from 32
+BATCH_SIZE = 16  # Reduced from 32
 GRADIENT_ACCUMULATION_STEPS = 4  # Reduced from 16
 
 # write a parse args to take in data path
