@@ -114,11 +114,15 @@ class VectorQuantizer(nn.Module):
         # Straight through estimator
         z_q = z + (z_q - z).detach()
         
-        # Calculate perplexity (measure of codebook usage)
+        # Calculate perplexity (measure of codebook usage) with numerical stability
         with torch.no_grad():
             encodings = F.one_hot(encoding_indices, self.n_codes).float()
-            avg_probs = encodings.mean(0)
-            perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+            avg_probs = encodings.sum(0) / encodings.sum()  # Calculate average usage of each code
+            # Add small epsilon to avoid log(0)
+            avg_probs = torch.clamp(avg_probs, min=1e-10)
+            # Normalize to ensure sum to 1
+            avg_probs = avg_probs / avg_probs.sum()
+            perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs)))
         
         return z_q, encoding_indices, commitment_loss * self.commitment_weight + codebook_loss, perplexity
 
