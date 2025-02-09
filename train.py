@@ -248,8 +248,7 @@ def main():
                           shuffle=True,
                           num_workers=0,  # No multiprocessing to reduce memory
                           pin_memory=False,  # Disable pinned memory
-                          persistent_workers=False,  # Disable persistent workers
-                          prefetch_factor=2)  # Reduce prefetching
+                          persistent_workers=False)  # Disable persistent workers
     
     # Initialize models with updated parameters
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
