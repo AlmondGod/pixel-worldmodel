@@ -13,7 +13,7 @@ from datetime import datetime
 
 EPOCHS = 4
 SAVE_DIR = Path("saved_models")
-BATCH_SIZE = 4  # Reduced from 32
+BATCH_SIZE = 8  # Reduced from 32
 GRADIENT_ACCUMULATION_STEPS = 2  # Reduced from 16
 CHECKPOINT_EVERY = 1
 
@@ -66,7 +66,7 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
             optimizer.zero_grad()
             
             # Forward pass
-            with torch.cuda.amp.autocast('cuda'):  # Use mixed precision
+            with torch.amp.autocast(device):  # Use mixed precision
                 recon, indices, vq_loss, perplexity = model(batch)
                 
                 # Compute reconstruction loss with L1 component
@@ -248,8 +248,7 @@ def main():
                           shuffle=True,
                           num_workers=0,  # No multiprocessing to reduce memory
                           pin_memory=False,  # Disable pinned memory
-                          persistent_workers=False,  # Disable persistent workers
-                          prefetch_factor=2)  # Reduce prefetching
+                          persistent_workers=False) 
     
     # Initialize models with updated parameters
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
