@@ -318,9 +318,9 @@ class WorldModelInference:
 
 def main():
     parser = argparse.ArgumentParser(description='World Model Inference')
-    parser.add_argument('--vqvae', type=str, default='saved_models/vqvae1.pth', help='Path to VQVAE weights')
-    parser.add_argument('--lam', type=str, default='saved_models/lam1.pth', help='Path to LAM weights')
-    parser.add_argument('--dynamics', type=str, default='saved_models/dynamics1.pth', help='Path to Dynamics weights')
+    parser.add_argument('--vqvae', type=str, default='saved_models/vqvae_20250208_221815.pth', help='Path to VQVAE weights')
+    parser.add_argument('--lam', type=str, default='saved_models/lam_20250208_222232.pth', help='Path to LAM weights')
+    parser.add_argument('--dynamics', type=str, default='saved_models/dynamics_20250208_222811.pth', help='Path to Dynamics weights')
     parser.add_argument('--video', type=str, default='pong.mp4', help='Path to initial video')
     parser.add_argument('--mode', type=str, choices=['interactive', 'autonomous'], 
                        default='autonomous', help='Inference mode')

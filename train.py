@@ -35,6 +35,8 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
     Train VQVAE model with codebook usage monitoring and gradient accumulation
     """
     model.train()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
+    
     for epoch in range(epochs):
         total_recon_loss = 0
         total_vq_loss = 0
@@ -53,8 +55,8 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
             # Forward pass
             recon, _, vq_loss, perplexity = model(batch)
             
-            # Compute reconstruction loss
-            recon_loss = F.mse_loss(recon, batch)
+            # Compute reconstruction loss with L1 component
+            recon_loss = 0.9 * F.mse_loss(recon, batch) + 0.1 * F.l1_loss(recon, batch)
             
             # Total loss is reconstruction loss plus VQ losses
             loss = recon_loss + vq_loss
@@ -71,6 +73,8 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
             
             # Step optimizer after accumulating gradients
             if (batch_idx + 1) % GRADIENT_ACCUMULATION_STEPS == 0:
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 optimizer.zero_grad()
             
@@ -84,6 +88,9 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
                     print(f"  GPU Memory: {torch.cuda.memory_allocated()/1e9:.1f}GB allocated, "
                           f"{torch.cuda.memory_reserved()/1e9:.1f}GB reserved")
         
+        # Step scheduler
+        scheduler.step()
+        
         # Print epoch statistics
         print(f"\nEpoch {epoch}")
         print(f"  Reconstruction Loss: {total_recon_loss/n_batches:.4f}")
@@ -91,13 +98,13 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
         print(f"  Average Perplexity: {avg_perplexity/n_batches:.1f}")
         
         # Print codebook usage statistics
-        if hasattr(model.quantizer, 'code_usage'):
-            code_usage = model.quantizer.code_usage.cpu().numpy()
-            active_codes = (code_usage > 0).sum()
+        if hasattr(model.quantizer, 'ema_cluster_size'):
+            cluster_size = model.quantizer.ema_cluster_size.cpu().numpy()
+            active_codes = (cluster_size > 1e-3).sum()
             print(f"  Active Codes: {active_codes}/{model.quantizer.n_codes}")
             if verbose:
-                print("  Most used codes:", np.argsort(-code_usage)[:10])
-                print("  Usage values:", np.sort(code_usage)[-10:])
+                print("  Most used codes:", np.argsort(-cluster_size)[:10])
+                print("  Usage values:", np.sort(cluster_size)[-10:])
 
 def train_dynamics(model, vqvae, lam, dataloader, optimizer, epochs=EPOCHS, device="cuda"):
     model.train()

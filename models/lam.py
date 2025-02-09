@@ -5,7 +5,7 @@ from einops import rearrange
 from models.vq_vae import STTransformerEncoder
 
 class ActionVectorQuantizer(nn.Module):
-    def __init__(self, n_codes=8, code_dim=256):  # |A| = 8 from paper
+    def __init__(self, n_codes=8, code_dim=256):  # Keep 8 actions for Pong
         super().__init__()
         self.embedding = nn.Embedding(n_codes, code_dim)
         self.embedding.weight.data.uniform_(-1./n_codes, 1./n_codes)
@@ -61,11 +61,11 @@ class LAMDecoder(nn.Module):
         return x
 
 class LAM(nn.Module):
-    def __init__(self, dim=256, n_heads=4, n_layers=4):
+    def __init__(self, dim=256, n_heads=4, n_layers=4):  # Keep same transformer params
         super().__init__()
         self.encoder = STTransformerEncoder(dim, n_heads, n_layers)
         self.action_proj = nn.Linear(dim, dim)
-        self.quantizer = ActionVectorQuantizer(n_codes=8, code_dim=dim)
+        self.quantizer = ActionVectorQuantizer(n_codes=8, code_dim=dim)  # 8 actions is enough for Pong
         self.decoder = LAMDecoder(dim, n_heads, n_layers)
         
     def forward(self, frames, next_frames):

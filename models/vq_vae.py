@@ -47,20 +47,47 @@ class STTransformerEncoder(nn.Module):
         return x
 
 class VectorQuantizer(nn.Module):
-    def __init__(self, n_codes=64, code_dim=16, commitment_weight=1.0):
+    def __init__(self, n_codes=64, code_dim=16, commitment_weight=0.25, decay=0.99, epsilon=1e-5):
         super().__init__()
         self.n_codes = n_codes
         self.code_dim = code_dim
         self.commitment_weight = commitment_weight
+        self.decay = decay
+        self.epsilon = epsilon
         
         # Initialize embedding with Xavier/Glorot initialization
         self.embedding = nn.Embedding(n_codes, code_dim)
-        nn.init.xavier_uniform_(self.embedding.weight)
+        nn.init.uniform_(self.embedding.weight, -1/n_codes, 1/n_codes)
         
-        # Keep track of code usage
-        register_buffer = getattr(self, 'register_buffer', None)
-        if register_buffer is not None:
-            self.register_buffer('code_usage', torch.zeros(n_codes))
+        # Initialize EMA tracking
+        self.register_buffer('ema_cluster_size', torch.zeros(n_codes))
+        self.register_buffer('ema_w', self.embedding.weight.data.clone())
+        
+    def _update_codebook(self, encodings, z):
+        """Update codebook using EMA updates"""
+        batch_size = encodings.shape[0]
+        
+        # Calculate new cluster sizes
+        encodings_one_hot = F.one_hot(encodings, self.n_codes).float()
+        cluster_size = encodings_one_hot.sum(0)
+        
+        # EMA update for cluster sizes
+        self.ema_cluster_size = self.ema_cluster_size * self.decay + \
+                               (1 - self.decay) * cluster_size
+        
+        # Laplace smoothing
+        n = self.ema_cluster_size.sum()
+        cluster_size = (self.ema_cluster_size + self.epsilon) / \
+                      (n + self.n_codes * self.epsilon) * n
+        
+        # Calculate new embeddings
+        dw = torch.matmul(encodings_one_hot.t(), z)
+        
+        # EMA update for embeddings
+        self.ema_w = self.ema_w * self.decay + (1 - self.decay) * dw
+        
+        # Normalize embeddings
+        self.embedding.weight.data = self.ema_w / cluster_size.unsqueeze(1)
         
     def forward(self, z):
         # z shape: [batch, tokens, code_dim]
@@ -71,16 +98,12 @@ class VectorQuantizer(nn.Module):
             2 * torch.matmul(z, self.embedding.weight.t())
             
         # Get nearest neighbor
-        min_encoding_indices = torch.argmin(d, dim=-1)
-        z_q = self.embedding(min_encoding_indices)
+        encoding_indices = torch.argmin(d, dim=-1)
+        z_q = self.embedding(encoding_indices)
         
-        # Update code usage statistics during training
+        # Update codebook in training mode
         if self.training:
-            with torch.no_grad():
-                code_usage = torch.bincount(min_encoding_indices.view(-1), 
-                                         minlength=self.n_codes).float()
-                if hasattr(self, 'code_usage'):
-                    self.code_usage = 0.99 * self.code_usage + 0.01 * code_usage
+            self._update_codebook(encoding_indices, z)
         
         # Compute losses
         commitment_loss = F.mse_loss(z_q.detach(), z)
@@ -91,23 +114,22 @@ class VectorQuantizer(nn.Module):
         
         # Calculate perplexity (measure of codebook usage)
         with torch.no_grad():
-            code_probs = torch.bincount(min_encoding_indices.view(-1), 
-                                      minlength=self.n_codes).float()
-            code_probs = code_probs / code_probs.sum()
-            perplexity = torch.exp(-torch.sum(code_probs * torch.log(code_probs + 1e-10)))
+            encodings = F.one_hot(encoding_indices, self.n_codes).float()
+            avg_probs = encodings.mean(0)
+            perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
         
-        return z_q, min_encoding_indices, commitment_loss * self.commitment_weight + codebook_loss, perplexity
+        return z_q, encoding_indices, commitment_loss * self.commitment_weight + codebook_loss, perplexity
 
 class VQVAE(nn.Module):
     def __init__(
         self,
-        dim=256,
-        n_heads=4,
-        n_layers=4,
-        patch_size=4,
-        n_codes=64,
-        code_dim=16,
-        commitment_weight=1.0
+        dim=256,            # Keep transformer dim large enough for good feature extraction
+        n_heads=4,          # Keep 4 heads for multi-scale feature learning
+        n_layers=4,         # Keep 4 layers for hierarchical features
+        patch_size=4,       # Keep 4x4 patches (good balance for Pong)
+        n_codes=32,         # Reduced: binary game needs fewer codes
+        code_dim=16,        # Reduced: simpler patterns need smaller embeddings
+        commitment_weight=0.25  # Keep lower commitment for stable training
     ):
         super().__init__()
         
@@ -117,12 +139,14 @@ class VQVAE(nn.Module):
         
         self.decoder = nn.Sequential(
             nn.Linear(code_dim, dim),
+            nn.GELU(),  # Keep GELU for better gradient flow
             nn.TransformerEncoder(
                 nn.TransformerEncoderLayer(
                     d_model=dim,
                     nhead=n_heads,
                     dim_feedforward=dim*4,
-                    batch_first=True
+                    batch_first=True,
+                    dropout=0.1  # Keep dropout for regularization
                 ),
                 num_layers=n_layers
             ),

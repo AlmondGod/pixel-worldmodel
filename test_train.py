@@ -82,7 +82,15 @@ def main():
     
     # Initialize models
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    vqvae = VQVAE().to(device)
+    vqvae = VQVAE(
+        dim=256,
+        n_heads=4,
+        n_layers=4,
+        patch_size=4,
+        n_codes=16,  # Match the saved model architecture
+        code_dim=16,
+        commitment_weight=1.0
+    ).to(device)
     lam = LAM().to(device)
     dynamics = MaskGITDynamics().to(device)
     
@@ -107,9 +115,9 @@ def main():
     # Test inference using WorldModelInference
     print("\nTesting inference pipeline...")
     inference = WorldModelInference(
-        vqvae_path=SAVE_DIR / "vqvae.pth",
-        lam_path=SAVE_DIR / "lam.pth",
-        dynamics_path=SAVE_DIR / "dynamics.pth",
+        vqvae_path=SAVE_DIR / "vqvae_20250208_221815.pth",
+        lam_path=SAVE_DIR / "lam_20250208_222232.pth",
+        dynamics_path=SAVE_DIR / "dynamics_20250208_222811.pth",
         device=device
     )
     
