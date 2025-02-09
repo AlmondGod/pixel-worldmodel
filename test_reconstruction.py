@@ -212,9 +212,9 @@ def main():
     
     try:
         # Load the timestamped models instead of the generic ones
-        vqvae.load_state_dict(torch.load(models_dir / "vqvae_20250208_221815.pth", map_location=device))
-        dynamics.load_state_dict(torch.load(models_dir / "dynamics_20250208_222811.pth", map_location=device))
-        lam.load_state_dict(torch.load(models_dir / "lam_20250208_222232.pth", map_location=device))
+        vqvae.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/vqvae_20250209_202437.pth", map_location=device))
+        dynamics.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/dynamics_20250209_203449.pth", map_location=device))
+        lam.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/lam_20250209_202901.pth", map_location=device))
     except Exception as e:
         print(f"\nError loading models: {str(e)}")
         print("\nTip: Make sure you've run training first and have model files in saved_models/")
