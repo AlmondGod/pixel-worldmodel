@@ -222,14 +222,7 @@ def main():
     # Training VQVAE with monitoring
     print("\nTraining VQVAE...")
     vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=1e-4)  # Reduced learning rate
-    scheduler = torch.optim.OneCycleLR(
-        vqvae_optim,
-        max_lr=3e-4,
-        epochs=EPOCHS,
-        steps_per_epoch=len(dataloader),
-        pct_start=0.3  # 30% warmup
-    )
-    train_vqvae(vqvae, dataloader, vqvae_optim, scheduler=scheduler, verbose=True)
+    train_vqvae(vqvae, dataloader, vqvae_optim, verbose=True)
     torch.save(vqvae.state_dict(), SAVE_DIR / get_timestamped_filename("vqvae"))
     
     # Clear GPU memory before training LAM
