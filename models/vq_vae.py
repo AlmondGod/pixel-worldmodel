@@ -135,8 +135,8 @@ class VQVAE(nn.Module):
         n_heads=4,          # Keep 4 heads for multi-scale feature learning
         n_layers=4,         # Keep 4 layers for hierarchical features
         patch_size=4,       # 4x4 patches (good balance for Pong)
-        n_codes=16,         # Small codebook for binary game
-        code_dim=16,        # Compact embeddings for simple patterns
+        n_codes=64,         # Increased from 16 to 32
+        code_dim=16,        # Keep same embedding size
         commitment_weight=0.5  # Increased commitment for better codebook usage
     ):
         super().__init__()

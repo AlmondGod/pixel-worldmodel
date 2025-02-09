@@ -11,11 +11,11 @@ import numpy as np
 import gc
 from datetime import datetime
 
-EPOCHS = 45
+EPOCHS = 4
 SAVE_DIR = Path("saved_models")
-BATCH_SIZE = 16  # Reduced from 32
-GRADIENT_ACCUMULATION_STEPS = 4  # Reduced from 16
-CHECKPOINT_EVERY = 15
+BATCH_SIZE = 4  # Reduced from 32
+GRADIENT_ACCUMULATION_STEPS = 2  # Reduced from 16
+CHECKPOINT_EVERY = 1
 
 # write a parse args to take in data path
 def parse_args():
@@ -55,7 +55,6 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
         total_vq_loss = 0
         avg_perplexity = 0
         n_batches = 0
-        optimizer.zero_grad()
         
         for batch_idx, batch in enumerate(dataloader):
             # Free up memory
@@ -64,6 +63,7 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
                 gc.collect()
             
             batch = batch.to(device)
+            optimizer.zero_grad()
             
             # Forward pass
             recon, _, vq_loss, perplexity = model(batch)
@@ -104,6 +104,10 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
                 if device == "cuda":
                     print(f"  GPU Memory: {torch.cuda.memory_allocated()/1e9:.1f}GB allocated, "
                           f"{torch.cuda.memory_reserved()/1e9:.1f}GB reserved")
+            
+            del recon_loss, vq_loss, loss
+            if device == "cuda":
+                torch.cuda.empty_cache()
         
         # Print epoch statistics
         print(f"\nEpoch {epoch}")
