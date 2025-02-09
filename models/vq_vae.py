@@ -125,13 +125,13 @@ class VectorQuantizer(nn.Module):
 class VQVAE(nn.Module):
     def __init__(
         self,
-        dim=256,            # Keep transformer dim large enough for good feature extraction
+        dim=256,            # Keep transformer dim for good feature extraction
         n_heads=4,          # Keep 4 heads for multi-scale feature learning
         n_layers=4,         # Keep 4 layers for hierarchical features
-        patch_size=4,       # Keep 4x4 patches (good balance for Pong)
-        n_codes=32,         # Reduced: binary game needs fewer codes
-        code_dim=16,        # Reduced: simpler patterns need smaller embeddings
-        commitment_weight=0.25  # Keep lower commitment for stable training
+        patch_size=4,       # 4x4 patches (good balance for Pong)
+        n_codes=16,         # Small codebook for binary game
+        code_dim=16,        # Compact embeddings for simple patterns
+        commitment_weight=0.25  # Lower commitment for stable training
     ):
         super().__init__()
         

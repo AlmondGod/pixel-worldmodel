@@ -30,12 +30,11 @@ def get_timestamped_filename(base_name):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{base_name}_{timestamp}.pth"
 
-def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verbose=False):
+def train_vqvae(model, dataloader, optimizer, scheduler=None, epochs=EPOCHS, device="cuda", verbose=False):
     """
     Train VQVAE model with codebook usage monitoring and gradient accumulation
     """
     model.train()
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
     
     for epoch in range(epochs):
         total_recon_loss = 0
@@ -76,20 +75,21 @@ def train_vqvae(model, dataloader, optimizer, epochs=EPOCHS, device="cuda", verb
                 # Clip gradients
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
+                if scheduler is not None:
+                    scheduler.step()
                 optimizer.zero_grad()
             
             if verbose and batch_idx % 10 == 0:
                 print(f"Batch {batch_idx}/{len(dataloader)}")
                 print(f"  Recon: {recon_loss.item():.4f}, VQ: {vq_loss.item():.4f}, "
                       f"Perplexity: {perplexity.item():.1f}")
+                if scheduler is not None:
+                    print(f"  Learning rate: {scheduler.get_last_lr()[0]:.2e}")
                 
                 # Memory stats
                 if device == "cuda":
                     print(f"  GPU Memory: {torch.cuda.memory_allocated()/1e9:.1f}GB allocated, "
                           f"{torch.cuda.memory_reserved()/1e9:.1f}GB reserved")
-        
-        # Step scheduler
-        scheduler.step()
         
         # Print epoch statistics
         print(f"\nEpoch {epoch}")
@@ -214,14 +214,22 @@ def main():
     if device == "cuda":
         print(f"GPU Memory available: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f}GB")
     
-    vqvae = VQVAE(n_codes=64, commitment_weight=1.0).to(device)  # Reduced codebook size
-    lam = LAM().to(device)  # Initialize LAM model
+    # Initialize models with default parameters
+    vqvae = VQVAE().to(device)  # Use default parameters optimized for binary Pong
+    lam = LAM().to(device)
     dynamics = MaskGITDynamics().to(device)
     
     # Training VQVAE with monitoring
     print("\nTraining VQVAE...")
-    vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=3e-4, betas=(0.9, 0.9))
-    train_vqvae(vqvae, dataloader, vqvae_optim, verbose=True)
+    vqvae_optim = torch.optim.AdamW(vqvae.parameters(), lr=1e-4)  # Reduced learning rate
+    scheduler = torch.optim.OneCycleLR(
+        vqvae_optim,
+        max_lr=3e-4,
+        epochs=EPOCHS,
+        steps_per_epoch=len(dataloader),
+        pct_start=0.3  # 30% warmup
+    )
+    train_vqvae(vqvae, dataloader, vqvae_optim, scheduler=scheduler, verbose=True)
     torch.save(vqvae.state_dict(), SAVE_DIR / get_timestamped_filename("vqvae"))
     
     # Clear GPU memory before training LAM
