@@ -47,17 +47,18 @@ class STTransformerEncoder(nn.Module):
         return x
 
 class VectorQuantizer(nn.Module):
-    def __init__(self, n_codes=64, code_dim=16, commitment_weight=0.25, decay=0.99, epsilon=1e-5):
+    def __init__(self, n_codes=64, code_dim=16, commitment_weight=0.5, decay=0.99, epsilon=1e-5, temp=1.0):
         super().__init__()
         self.n_codes = n_codes
         self.code_dim = code_dim
         self.commitment_weight = commitment_weight
         self.decay = decay
         self.epsilon = epsilon
+        self.temp = temp
         
         # Initialize embedding with Xavier/Glorot initialization
         self.embedding = nn.Embedding(n_codes, code_dim)
-        nn.init.uniform_(self.embedding.weight, -1/n_codes, 1/n_codes)
+        nn.init.xavier_uniform_(self.embedding.weight)
         
         # Initialize EMA tracking
         self.register_buffer('ema_cluster_size', torch.zeros(n_codes))
@@ -73,14 +74,14 @@ class VectorQuantizer(nn.Module):
         # Calculate new cluster sizes
         cluster_size = encodings_one_hot.sum(0)
         
-        # EMA update for cluster sizes
+        # EMA update for cluster sizes with minimum cluster size
         self.ema_cluster_size = self.ema_cluster_size * self.decay + \
                             (1 - self.decay) * cluster_size
         
-        # Laplace smoothing
+        # Laplace smoothing with minimum cluster size
         n = self.ema_cluster_size.sum()
-        cluster_size = (self.ema_cluster_size + self.epsilon) / \
-                    (n + self.n_codes * self.epsilon) * n
+        cluster_size = ((self.ema_cluster_size + self.epsilon) / \
+                    (n + self.n_codes * self.epsilon) * n).clamp(min=0.01)
         
         # Calculate new embeddings
         dw = torch.matmul(encodings_one_hot.t(), z)
@@ -94,10 +95,11 @@ class VectorQuantizer(nn.Module):
     def forward(self, z):
         # z shape: [batch, tokens, code_dim]
         
-        # Calculate distances
+        # Calculate distances with temperature scaling
         d = torch.sum(z ** 2, dim=-1, keepdim=True) + \
             torch.sum(self.embedding.weight ** 2, dim=-1) - \
             2 * torch.matmul(z, self.embedding.weight.t())
+        d = d / self.temp  # Apply temperature scaling
             
         # Get nearest neighbor
         encoding_indices = torch.argmin(d, dim=-1)
@@ -135,13 +137,18 @@ class VQVAE(nn.Module):
         patch_size=4,       # 4x4 patches (good balance for Pong)
         n_codes=16,         # Small codebook for binary game
         code_dim=16,        # Compact embeddings for simple patterns
-        commitment_weight=0.25  # Lower commitment for stable training
+        commitment_weight=0.5  # Increased commitment for better codebook usage
     ):
         super().__init__()
         
         self.encoder = STTransformerEncoder(dim, n_heads, n_layers, patch_size)
         self.pre_quantize = nn.Linear(dim, code_dim)
-        self.quantizer = VectorQuantizer(n_codes, code_dim, commitment_weight)
+        self.quantizer = VectorQuantizer(
+            n_codes=n_codes,
+            code_dim=code_dim,
+            commitment_weight=commitment_weight,
+            temp=0.5  # Lower temperature for sharper code assignments
+        )
         
         self.decoder = nn.Sequential(
             nn.Linear(code_dim, dim),
