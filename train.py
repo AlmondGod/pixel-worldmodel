@@ -309,7 +309,8 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             action_probs = torch.bincount(indices, minlength=8).float()
             action_probs = action_probs / action_probs.sum()
             action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
-            entropy_loss = -0.5 * action_entropy  # Increased weight for entropy
+            max_entropy = torch.log(torch.tensor(8.0, device=device))  # Maximum possible entropy for 8 actions
+            entropy_loss = -2.0 * (action_entropy - max_entropy)  # Much stronger weight and target maximum entropy
             
             # Calculate frame differences for just the last frame transition
             last_prev_frames = prev_frames[:, -1]  # [B, H, W]
@@ -326,14 +327,14 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             last_actions = indices.reshape(-1)[-batch.size(0):]  # Get last action for each sequence
             action_sims = (last_actions.unsqueeze(0) == last_actions.unsqueeze(1)).float()  # [B, B]
             
-            # Contrastive loss: similar transitions should have different actions
-            contrastive_loss = (similarities * action_sims).mean()
+            # Stronger contrastive loss
+            contrastive_loss = 0.5 * (similarities * action_sims).mean()  # Increased weight
             
             # Add L1 regularization on reconstructed frames to encourage sparsity
             l1_loss = 0.01 * torch.abs(reconstructed).mean()
             
             # Total loss with increased weights for diversity
-            loss = recon_loss + entropy_loss + 0.1 * contrastive_loss + l1_loss
+            loss = recon_loss + entropy_loss + contrastive_loss + l1_loss
             
             loss.backward()
             optimizer.step()
