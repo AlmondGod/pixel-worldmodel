@@ -14,9 +14,12 @@ import torch.nn.functional as F
 class WorldModelInference:
     def __init__(
         self,
-        vqvae_path: str,
-        lam_path: str,
-        dynamics_path: str,
+        vqvae_path: str = None,
+        lam_path: str = None,
+        dynamics_path: str = None,
+        vqvae=None,
+        lam=None,
+        dynamics=None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu"
     ):
         """Initialize models for inference."""
@@ -27,10 +30,26 @@ class WorldModelInference:
         self.lam = LAM().to(device)
         self.dynamics = MaskGITDynamics().to(device)
         
-        # Load weights
-        self.vqvae.load_state_dict(torch.load(vqvae_path, map_location=device, weights_only=True))
-        self.lam.load_state_dict(torch.load(lam_path, map_location=device, weights_only=True))
-        self.dynamics.load_state_dict(torch.load(dynamics_path, map_location=device, weights_only=True))
+        if vqvae is not None:
+            self.vqvae = vqvae
+        elif vqvae_path is not None:
+            self.vqvae.load_state_dict(torch.load(vqvae_path, map_location=device, weights_only=True))
+        else:
+            raise ValueError("Either vqvae or vqvae_path must be provided")
+
+        if lam is not None:
+            self.lam = lam
+        elif lam_path is not None:
+            self.lam.load_state_dict(torch.load(lam_path, map_location=device, weights_only=True))
+        else:
+            raise ValueError("Either lam or lam_path must be provided")
+        
+        if dynamics is not None:
+            self.dynamics = dynamics    
+        elif dynamics_path is not None:
+            self.dynamics.load_state_dict(torch.load(dynamics_path, map_location=device, weights_only=True))
+        else:
+            raise ValueError("Either dynamics or dynamics_path must be provided")
         
         # Set to eval mode
         self.vqvae.eval()
