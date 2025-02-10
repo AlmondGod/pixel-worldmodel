@@ -207,7 +207,21 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             
             # Calculate cross entropy loss
             loss = F.cross_entropy(pred_tokens, target_tokens)
-            loss.backward()
+            
+            # Add action diversity loss
+            action_probs = torch.bincount(actions, minlength=8).float()
+            action_probs = action_probs / action_probs.sum()
+            action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
+            action_diversity_loss = -1.0 * action_entropy  # Strong weight to encourage diversity
+            
+            # Add prediction diversity loss to encourage balanced token usage
+            pred_probs = torch.softmax(pred_tokens, dim=-1).mean(dim=0)
+            pred_entropy = -(pred_probs * torch.log(pred_probs + 1e-10)).sum()
+            pred_diversity_loss = -0.5 * pred_entropy
+            
+            # Combined loss
+            total_loss = loss + action_diversity_loss + pred_diversity_loss
+            total_loss.backward()
             
             # Calculate accuracy
             with torch.no_grad():
@@ -218,22 +232,29 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 # Track unique tokens and predictions
                 n_unique_targets = len(torch.unique(target_tokens))
                 n_unique_preds = len(torch.unique(pred_indices))
+                
+                # Track action entropy
+                action_entropy_val = action_entropy.item()
             
             optimizer.step()
             
-            total_loss += loss.item()
+            total_loss += total_loss.item()
             total_mask_ratio += mask_ratio
             n_batches += 1
             
             # Print batch statistics
             if n_batches % 10 == 0:
                 print(f"\nBatch {n_batches}/{len(dataloader)}")
-                print(f"  Loss: {loss.item():.4f}")
+                print(f"  CE Loss: {loss.item():.4f}")
+                print(f"  Action Diversity Loss: {action_diversity_loss.item():.4f}")
+                print(f"  Pred Diversity Loss: {pred_diversity_loss.item():.4f}")
+                print(f"  Total Loss: {total_loss.item():.4f}")
                 print(f"  Token Accuracy: {token_accuracy.item():.4f}")
+                print(f"  Action Entropy: {action_entropy_val:.4f}")
                 print(f"  Mask Ratio: {mask_ratio:.2f}")
                 print(f"  Unique Target Tokens: {n_unique_targets}")
                 print(f"  Unique Predicted Tokens: {n_unique_preds}")
-                print(f"  Action Distribution: {torch.bincount(actions)}")
+                print(f"  Action Distribution: {torch.bincount(actions, minlength=8)}")
         
         print(f"\nEpoch {epoch}")
         print(f"  Average Loss: {total_loss/n_batches:.4f}")
