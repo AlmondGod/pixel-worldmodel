@@ -10,6 +10,7 @@ import argparse
 import numpy as np
 import gc
 from datetime import datetime
+from test_reconstruction import test_vqvae_reconstruction
 
 EPOCHS = 4
 SAVE_DIR = Path("saved_models")
@@ -65,18 +66,18 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
             batch = batch.to(device)
             optimizer.zero_grad()
             
-            # Forward pass
-            with torch.cuda.amp.autocast('cuda'):  # Use mixed precision
-                recon, indices, vq_loss, perplexity = model(batch)
-                
-                # Use binary cross entropy loss for binary data
-                recon_loss = F.binary_cross_entropy(recon.float(), batch.float())
-                
-                # Total loss is reconstruction loss plus VQ losses
-                loss = recon_loss + vq_loss
-                
-                # Normalize loss for gradient accumulation
-                loss = loss / GRADIENT_ACCUMULATION_STEPS
+            # Forward pass=
+            recon, indices, vq_loss, perplexity = model(batch)
+            
+            # Use binary cross entropy loss for binary data
+            # Note: recon is already binary (0 or 1) from the model
+            recon_loss = F.binary_cross_entropy_with_logits(recon, batch.float())
+            
+            # Total loss is reconstruction loss plus VQ losses
+            loss = recon_loss + vq_loss
+            
+            # Normalize loss for gradient accumulation
+            loss = loss / GRADIENT_ACCUMULATION_STEPS
             
             # Backward pass
             loss.backward()
@@ -137,6 +138,7 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
         # Save checkpoint every CHECKPOINT_EVERY epochs and at the final epoch
         if (epoch + 1) % CHECKPOINT_EVERY == 0 or epoch == epochs - 1:
             save_checkpoint(model, "vqvae", epoch + 1, save_dir)
+            test_vqvae_reconstruction(model, dataloader, device, save_dir)
             
         # Clear memory at end of epoch
         if device == "cuda":

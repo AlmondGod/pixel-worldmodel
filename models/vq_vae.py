@@ -183,8 +183,14 @@ class VQVAE(nn.Module):
         recon = rearrange(recon, '(b f) (h w) (p1 p2) -> b f (h p1) (w p2)',
                          f=x.size(1), h=16, w=16, p1=4, p2=4)
         
-        # Threshold to get binary output
-        with torch.no_grad():
-            recon = (recon > self.threshold).float()
+        # Get continuous values for loss calculation
+        continuous_recon = recon.clone()
+        
+        # Apply hard thresholding for binary output
+        recon = (recon > self.threshold).float()
+        
+        # During training, use straight-through estimator to allow gradients
+        if self.training:
+            recon = continuous_recon + (recon - continuous_recon).detach()
         
         return recon, indices, vq_loss, perplexity 
