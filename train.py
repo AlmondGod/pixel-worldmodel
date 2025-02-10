@@ -44,7 +44,7 @@ def save_checkpoint(model, model_name, epoch, save_dir):
     torch.save(model.state_dict(), checkpoint_path)
     print(f"Saved {model_name} checkpoint at epoch {epoch}")
 
-def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=EPOCHS, device="cuda", verbose=False):
+def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None, epochs=EPOCHS, device="cuda", verbose=False):
     """
     Train VQVAE model with codebook usage monitoring and gradient accumulation
     """
@@ -69,8 +69,8 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
             with torch.cuda.amp.autocast('cuda'):  # Use mixed precision
                 recon, indices, vq_loss, perplexity = model(batch)
                 
-                # Compute reconstruction loss with L1 component
-                recon_loss = 0.9 * F.mse_loss(recon, batch) + 0.1 * F.l1_loss(recon, batch)
+                # Use binary cross entropy loss for binary data
+                recon_loss = F.binary_cross_entropy(recon.float(), batch.float())
                 
                 # Total loss is reconstruction loss plus VQ losses
                 loss = recon_loss + vq_loss
@@ -100,6 +100,11 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
                 print(f"Batch {batch_idx}/{len(dataloader)}")
                 print(f"  Recon: {recon_loss.item():.4f}, VQ: {vq_loss.item():.4f}, "
                       f"Perplexity: {perplexity.item():.1f}")
+                # Print binary statistics
+                with torch.no_grad():
+                    binary_recon = (recon > 0.5).float()
+                    accuracy = (binary_recon == batch).float().mean()
+                    print(f"  Binary Accuracy: {accuracy.item():.4f}")
                 if scheduler is not None:
                     print(f"  Learning rate: {scheduler.get_last_lr()[0]:.2e}")
                 
@@ -140,8 +145,12 @@ def train_vqvae(model, dataloader, optimizer, save_dir, scheduler=None, epochs=E
 
 def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cuda"):
     model.train()
+    vqvae.eval()  # Ensure VQVAE is in eval mode
+    lam.eval()    # Ensure LAM is in eval mode
+    
     for epoch in range(epochs):
         total_loss = 0
+        total_accuracy = 0
         n_batches = 0
         
         for batch in dataloader:
@@ -163,8 +172,8 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 # Ensure tokens and actions have same batch dimension
                 tokens = tokens[:actions.size(0)]
             
-            # Create random masks
-            mask_ratio = torch.rand(1).item() * 0.5 + 0.5
+            # Create random masks with higher masking rate for binary data
+            mask_ratio = torch.rand(1).item() * 0.3 + 0.7  # 70-100% masking rate
             mask = torch.rand_like(tokens[:, :-1].float()) < mask_ratio
             
             # Predict next tokens
@@ -174,14 +183,31 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             target_tokens = tokens[:, 1:][mask]
             pred_tokens = logits[mask]
             
+            # Calculate cross entropy loss
             loss = F.cross_entropy(pred_tokens, target_tokens)
             loss.backward()
+            
+            # Calculate accuracy
+            with torch.no_grad():
+                pred_indices = torch.argmax(pred_tokens, dim=-1)
+                accuracy = (pred_indices == target_tokens).float().mean()
+                total_accuracy += accuracy.item()
+            
             optimizer.step()
             
             total_loss += loss.item()
             n_batches += 1
             
-        print(f"Epoch {epoch}, Loss: {total_loss/n_batches:.4f}")
+            # Print batch statistics
+            if n_batches % 10 == 0:
+                print(f"Batch {n_batches}")
+                print(f"  Loss: {loss.item():.4f}")
+                print(f"  Accuracy: {accuracy.item():.4f}")
+                print(f"  Mask Ratio: {mask_ratio:.2f}")
+        
+        print(f"Epoch {epoch}")
+        print(f"  Average Loss: {total_loss/n_batches:.4f}")
+        print(f"  Average Accuracy: {total_accuracy/n_batches:.4f}")
         
         # Save checkpoint every CHECKPOINT_EVERY epochs and at the final epoch
         if (epoch + 1) % CHECKPOINT_EVERY == 0 or epoch == epochs - 1:

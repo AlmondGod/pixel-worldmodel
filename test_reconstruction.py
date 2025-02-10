@@ -17,14 +17,14 @@ def plot_comparison(original, reconstructed, title, save_path):
     for i in range(n_frames):
         # Original
         plt.subplot(2, n_frames, i + 1)
-        plt.imshow(original[i], cmap='gray')
+        plt.imshow(1 - original[i], cmap='binary', vmin=0, vmax=1)  # Invert colors with 1 - original
         plt.axis('off')
         if i == 0:
             plt.title('Original')
             
         # Reconstructed
         plt.subplot(2, n_frames, n_frames + i + 1)
-        plt.imshow(reconstructed[i], cmap='gray')
+        plt.imshow(1 - reconstructed[i], cmap='binary', vmin=0, vmax=1)  # Invert colors with 1 - reconstructed
         plt.axis('off')
         if i == 0:
             plt.title('Reconstructed')
@@ -35,16 +35,26 @@ def plot_comparison(original, reconstructed, title, save_path):
     plt.close()
 
 def calculate_metrics(original, reconstructed):
-    """Calculate MSE and PSNR"""
-    mse = np.mean((original - reconstructed) ** 2)
-    psnr = 20 * np.log10(1.0 / np.sqrt(mse))  # Assuming max pixel value is 1
-    return mse, psnr
+    """Calculate binary accuracy and IoU for binary images"""
+    # Ensure inputs are binary
+    original = original.astype(bool)
+    reconstructed = reconstructed.astype(bool)
+    
+    # Calculate accuracy
+    accuracy = np.mean(original == reconstructed)
+    
+    # Calculate IoU (Intersection over Union)
+    intersection = np.logical_and(original, reconstructed).sum()
+    union = np.logical_or(original, reconstructed).sum()
+    iou = intersection / (union + 1e-6)  # Add small epsilon to avoid division by zero
+    
+    return accuracy, iou
 
 def test_vqvae_reconstruction(model, dataloader, device, save_dir):
     """Test VQVAE reconstruction quality"""
     model.eval()
-    total_mse = 0
-    total_psnr = 0
+    total_accuracy = 0
+    total_iou = 0
     n_sequences = 0
     
     print("\nTesting VQVAE reconstruction...")
@@ -66,29 +76,29 @@ def test_vqvae_reconstruction(model, dataloader, device, save_dir):
             print(f"reconstructed: {reconstructed}")
             
             # Calculate metrics
-            mse, psnr = calculate_metrics(original, reconstructed)
-            total_mse += mse
-            total_psnr += psnr
+            accuracy, iou = calculate_metrics(original, reconstructed)
+            total_accuracy += accuracy
+            total_iou += iou
             n_sequences += 1
             
             # Plot and save comparison
             plot_comparison(
                 original[0], reconstructed[0],
-                f'VQVAE Reconstruction (MSE: {mse:.4f}, PSNR: {psnr:.2f}dB)',
+                f'VQVAE Reconstruction (Accuracy: {accuracy:.4f}, IoU: {iou:.4f})',
                 save_dir / f'vqvae_reconstruction_{batch_idx}.png'
             )
             
             print(f"Sequence {batch_idx}:")
-            print(f"  MSE: {mse:.4f}")
-            print(f"  PSNR: {psnr:.2f}dB")
+            print(f"  Accuracy: {accuracy:.4f}")
+            print(f"  IoU: {iou:.4f}")
             print(f"  VQ Loss: {vq_loss.item():.4f}")
             print(f"  Codebook Perplexity: {perplexity.item():.2f}")
     
-    avg_mse = total_mse / n_sequences
-    avg_psnr = total_psnr / n_sequences
+    avg_accuracy = total_accuracy / n_sequences
+    avg_iou = total_iou / n_sequences
     print(f"\nAverage metrics across {n_sequences} sequences:")
-    print(f"  MSE: {avg_mse:.4f}")
-    print(f"  PSNR: {avg_psnr:.2f}dB")
+    print(f"  Accuracy: {avg_accuracy:.4f}")
+    print(f"  IoU: {avg_iou:.4f}")
 
 def test_dynamics_prediction(vqvae, dynamics, lam, dataloader, device, save_dir):
     """Test dynamics model prediction quality"""
@@ -96,8 +106,8 @@ def test_dynamics_prediction(vqvae, dynamics, lam, dataloader, device, save_dir)
     dynamics.eval()
     lam.eval()
     
-    total_mse = 0
-    total_psnr = 0
+    total_accuracy = 0
+    total_iou = 0
     n_sequences = 0
     
     print("\nTesting dynamics model prediction...")
@@ -157,27 +167,27 @@ def test_dynamics_prediction(vqvae, dynamics, lam, dataloader, device, save_dir)
             predicted = predicted.squeeze(1).cpu().numpy()
             
             # Calculate metrics
-            mse, psnr = calculate_metrics(original, predicted)
-            total_mse += mse
-            total_psnr += psnr
+            accuracy, iou = calculate_metrics(original, predicted)
+            total_accuracy += accuracy
+            total_iou += iou
             n_sequences += 1
             
             # Plot and save comparison
             plot_comparison(
                 original[0:1], predicted[0:1],
-                f'Dynamics Prediction (MSE: {mse:.4f}, PSNR: {psnr:.2f}dB)',
+                f'Dynamics Prediction (Accuracy: {accuracy:.4f}, IoU: {iou:.4f})',
                 save_dir / f'dynamics_prediction_{batch_idx}.png'
             )
             
             print(f"Sequence {batch_idx}:")
-            print(f"  MSE: {mse:.4f}")
-            print(f"  PSNR: {psnr:.2f}dB")
+            print(f"  Accuracy: {accuracy:.4f}")
+            print(f"  IoU: {iou:.4f}")
     
-    avg_mse = total_mse / n_sequences
-    avg_psnr = total_psnr / n_sequences
+    avg_accuracy = total_accuracy / n_sequences
+    avg_iou = total_iou / n_sequences
     print(f"\nAverage metrics across {n_sequences} sequences:")
-    print(f"  MSE: {avg_mse:.4f}")
-    print(f"  PSNR: {avg_psnr:.2f}dB")
+    print(f"  Accuracy: {avg_accuracy:.4f}")
+    print(f"  IoU: {avg_iou:.4f}")
 
 def main():
     # Create save directory for visualizations
@@ -188,17 +198,10 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Initialize VQVAE with matching architecture and tracking disabled
-    vqvae = VQVAE(
-        dim=256,
-        n_heads=4,
-        n_layers=4,
-        patch_size=4,
-        n_codes=16,  # Match the saved model's codebook size
-        code_dim=16,
-        commitment_weight=1.0
-    ).to(device)
+    vqvae = VQVAE().to(device)
     vqvae.quantizer.track_usage = False  # Disable usage tracking
     
+    # Initialize dynamics model with matching codebook size
     dynamics = MaskGITDynamics().to(device)
     lam = LAM().to(device)
     
@@ -210,15 +213,15 @@ def main():
     for model_path in models_dir.glob("*.pth"):
         print(f"  {model_path}")
     
-    try:
+    # try:
         # Load the timestamped models instead of the generic ones
-        vqvae.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/vqvae_20250209_202437.pth", map_location=device))
-        dynamics.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/dynamics_20250209_203449.pth", map_location=device))
-        lam.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/lam_20250209_202901.pth", map_location=device))
-    except Exception as e:
-        print(f"\nError loading models: {str(e)}")
-        print("\nTip: Make sure you've run training first and have model files in saved_models/")
-        return
+        # vqvae.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/28081027/vqvae_20250209_080614.pth", map_location=device))
+        # dynamics.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/28081027/dynamics_20250209_081759.pth", map_location=device))
+        # lam.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/28081027/lam_20250209_081027.pth", map_location=device))
+    # except Exception as e:
+    #     print(f"\nError loading models: {str(e)}")
+    #     print("\nTip: Make sure you've run training first and have model files in saved_models/")
+    #     return
     
     # Load dataset
     try:
