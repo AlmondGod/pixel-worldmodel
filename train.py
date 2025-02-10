@@ -284,14 +284,36 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             # Reconstruction loss
             recon_loss = F.mse_loss(reconstructed, next_frame)
             
-            # Add action diversity loss
+            # Add stronger action diversity loss
             action_probs = torch.bincount(indices, minlength=8).float()
             action_probs = action_probs / action_probs.sum()
             action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
-            entropy_loss = -0.1 * action_entropy  # Encourage higher entropy
+            entropy_loss = -0.5 * action_entropy  # Increased weight for entropy
             
-            # Total loss
-            loss = recon_loss + entropy_loss
+            # Add contrastive loss to encourage different actions for different transitions
+            # Calculate frame differences
+            frame_diffs = next_frame - prev_frames[:, -1]  # [B, H, W]
+            frame_diffs = frame_diffs.reshape(frame_diffs.size(0), -1)  # [B, H*W]
+            
+            # Normalize frame differences
+            frame_diffs = F.normalize(frame_diffs, dim=1)
+            
+            # Calculate pairwise similarities between frame differences
+            similarities = torch.matmul(frame_diffs, frame_diffs.t())  # [B, B]
+            
+            # Calculate action similarities (1 if same action, 0 if different)
+            action_sims = (indices.unsqueeze(0) == indices.unsqueeze(1)).float()
+            
+            # Contrastive loss: similar transitions should have different actions
+            contrastive_loss = (similarities * action_sims).mean()
+            
+            # Total loss with increased weights for diversity
+            loss = recon_loss + entropy_loss + 0.1 * contrastive_loss
+            
+            # Add L1 regularization on reconstructed frames to encourage sparsity
+            l1_loss = 0.01 * torch.abs(reconstructed).mean()
+            loss = loss + l1_loss
+            
             loss.backward()
             optimizer.step()
             
@@ -318,12 +340,20 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             if n_batches % 10 == 0:
                 print(f"\nBatch {n_batches}/{len(dataloader)}")
                 print(f"  Recon Loss: {recon_loss.item():.4f}")
+                print(f"  Entropy Loss: {entropy_loss.item():.4f}")
+                print(f"  Contrastive Loss: {contrastive_loss.item():.4f}")
+                print(f"  L1 Loss: {l1_loss.item():.4f}")
                 print(f"  Action Entropy: {action_entropy.item():.4f}")
                 print(f"  Overall Accuracy: {accuracy.item():.4f}")
                 print(f"  White Pixel Accuracy: {white_accuracy.item():.4f}")
                 print(f"  Black Pixel Accuracy: {black_accuracy.item():.4f}")
                 print(f"  Action Distribution: {torch.bincount(indices, minlength=8)}")
                 print(f"  Unique Actions: {len(torch.unique(indices))}")
+                
+                # Print frame difference statistics
+                with torch.no_grad():
+                    mean_diff = frame_diffs.abs().mean().item()
+                    print(f"  Mean Frame Difference: {mean_diff:.4f}")
         
         # Print epoch statistics
         print(f"\nEpoch {epoch}")
