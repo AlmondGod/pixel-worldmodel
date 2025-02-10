@@ -73,8 +73,23 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
             # Forward pass
             logits, indices, vq_loss, perplexity = model(batch)
             
-            # Binary cross entropy with logits
-            recon_loss = F.binary_cross_entropy_with_logits(logits, batch)
+            # Calculate positive weight for BCE loss based on black/white ratio
+            n_white = batch.sum()
+            n_black = batch.numel() - n_white
+            pos_weight = (n_black / n_white).clamp(min=1.0, max=10.0)  # Clamp to prevent extreme values
+            
+            # Binary cross entropy with logits and positive weight
+            recon_loss = F.binary_cross_entropy_with_logits(
+                logits, 
+                batch,
+                pos_weight=torch.tensor([pos_weight], device=device)
+            )
+            
+            # Print statistics about black/white ratio and pos_weight
+            if verbose and batch_idx % 10 == 0:
+                white_ratio = (n_white / batch.numel()).item()
+                print(f"  White pixel ratio: {white_ratio:.3f}")
+                print(f"  Positive weight: {pos_weight:.3f}")
             
             # Total loss is reconstruction loss plus VQ losses
             loss = recon_loss + vq_loss
@@ -89,6 +104,11 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
             with torch.no_grad():
                 predictions = (torch.sigmoid(logits) > 0.5).float()
                 accuracy = (predictions == batch).float().mean()
+                
+                # Calculate separate accuracies for white and black pixels
+                white_accuracy = (predictions[batch == 1] == 1).float().mean() if n_white > 0 else torch.tensor(0.0)
+                black_accuracy = (predictions[batch == 0] == 0).float().mean() if n_black > 0 else torch.tensor(0.0)
+                
                 total_accuracy += accuracy.item()
             
             # Track metrics before clearing memory
@@ -110,7 +130,9 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
                 print(f"Batch {batch_idx}/{len(dataloader)}")
                 print(f"  Recon: {recon_loss.item():.4f}, VQ: {vq_loss.item():.4f}")
                 print(f"  Perplexity: {perplexity.item():.1f}")
-                print(f"  Binary Accuracy: {accuracy.item():.4f}")
+                print(f"  Overall Accuracy: {accuracy.item():.4f}")
+                print(f"  White Pixel Accuracy: {white_accuracy.item():.4f}")
+                print(f"  Black Pixel Accuracy: {black_accuracy.item():.4f}")
                 if scheduler is not None:
                     print(f"  Learning rate: {scheduler.get_last_lr()[0]:.2e}")
                 
@@ -129,7 +151,7 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
         print(f"  Reconstruction Loss: {total_recon_loss/n_batches:.4f}")
         print(f"  VQ Loss: {total_vq_loss/n_batches:.4f}")
         print(f"  Average Perplexity: {avg_perplexity/n_batches:.1f}")
-        print(f"  Average Binary Accuracy: {total_accuracy/n_batches:.4f}")
+        print(f"  Average Accuracy: {total_accuracy/n_batches:.4f}")
         
         # Save checkpoint and test reconstruction
         if (epoch + 1) % CHECKPOINT_EVERY == 0 or epoch == epochs - 1:
