@@ -6,7 +6,7 @@ from einops import rearrange
 class MaskGITDynamics(nn.Module):
     def __init__(
         self,
-        n_codes=64,     # Match VQVAE codebook size
+        n_codes=32,     # Match VQVAE codebook size
         dim=256,        # Keep transformer dim for good feature learning
         n_layers=4,     # Reduced: simpler dynamics need fewer layers
         n_heads=4,      # Keep 4 heads for multi-scale attention
