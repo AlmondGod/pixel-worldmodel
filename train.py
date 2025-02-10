@@ -165,6 +165,10 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
     vqvae.eval()  # Ensure VQVAE is in eval mode
     lam.eval()    # Ensure LAM is in eval mode
     
+    # Track best model
+    best_accuracy = 0.0
+    best_epoch = 0
+    
     for epoch in range(epochs):
         total_loss = 0
         total_accuracy = 0
@@ -219,16 +223,32 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             if n_batches % 10 == 0:
                 print(f"Batch {n_batches}")
                 print(f"  Loss: {loss.item():.4f}")
-                print(f"  Accuracy: {accuracy.item():.4f}")
+                print(f"  Token Accuracy: {accuracy.item():.4f}")
                 print(f"  Mask Ratio: {mask_ratio:.2f}")
         
-        print(f"Epoch {epoch}")
+        print(f"\nEpoch {epoch}")
         print(f"  Average Loss: {total_loss/n_batches:.4f}")
-        print(f"  Average Accuracy: {total_accuracy/n_batches:.4f}")
+        print(f"  Average Token Accuracy: {total_accuracy/n_batches:.4f}")
         
-        # Save checkpoint every CHECKPOINT_EVERY epochs and at the final epoch
+        # Evaluate on test set
+        print("\nEvaluating dynamics model...")
+        model.eval()
+        accuracy, iou, white_acc, black_acc = test_dynamics(
+            vqvae, model, lam, dataloader, device, save_dir
+        )
+        model.train()
+        
+        # Save best model
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            best_epoch = epoch
+            save_checkpoint(model, "dynamics_best", epoch + 1, save_dir)
+        
+        # Save regular checkpoint
         if (epoch + 1) % CHECKPOINT_EVERY == 0 or epoch == epochs - 1:
             save_checkpoint(model, "dynamics", epoch + 1, save_dir)
+            
+        print(f"\nBest model so far from epoch {best_epoch} with accuracy {best_accuracy:.4f}")
 
 def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cuda"):
     model.train()

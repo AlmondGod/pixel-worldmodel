@@ -113,94 +113,96 @@ def test_vqvae_reconstruction(model, dataloader, device, save_dir):
     print(f"  Accuracy: {avg_accuracy:.4f}")
     print(f"  IoU: {avg_iou:.4f}")
 
-def test_dynamics_prediction(vqvae, dynamics, lam, dataloader, device, save_dir):
-    """Test dynamics model prediction quality"""
+def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_sequences=5):
+    """Test dynamics model's ability to predict next frames."""
     vqvae.eval()
     dynamics.eval()
     lam.eval()
     
     total_accuracy = 0
     total_iou = 0
+    total_white_accuracy = 0
+    total_black_accuracy = 0
     n_sequences = 0
     
     print("\nTesting dynamics model prediction...")
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(dataloader):
-            if batch_idx >= 5:  # Test on 5 sequences
+            if batch_idx >= n_test_sequences:
                 break
                 
             batch = batch.to(device)
             
-            # Split into previous and next frames
-            prev_frames = batch[:, :-1]  # [B, T-1, H, W]
-            next_frames = batch[:, 1:]   # [B, T-1, H, W]
+            # Get initial frame and actual next frame
+            initial_frame = batch[:, 0:1]  # [B, 1, H, W]
+            actual_next_frame = batch[:, 1:2]  # [B, 1, H, W]
             
-            # Debug shapes
-            print(f"\nBatch {batch_idx} shapes:")
-            print(f"  batch: {batch.shape}")
-            print(f"  prev_frames: {prev_frames.shape}")
-            print(f"  next_frames: {next_frames.shape}")
+            # Get tokens for initial frame
+            _, initial_tokens, _, _ = vqvae(initial_frame)
             
-            # Get actions using LAM
-            actions = lam.infer_actions(prev_frames, next_frames)
-            print(f"  actions after LAM: {actions.shape}")
-            actions = actions.reshape(batch.size(0), -1)  # [B, (T-1)]
-            print(f"  actions after reshape: {actions.shape}")
-            actions = actions[:, 0]  # Take first action for each sequence [B]
-            print(f"  actions final: {actions.shape}")
+            # Get action using LAM
+            action = lam.infer_actions(initial_frame, actual_next_frame)
+            action = action.reshape(-1)[0]  # Take first action
             
-            # Get tokens from VQVAE for the last frame only
-            _, last_frame_tokens, _, _ = vqvae(batch[:, -1:])  # Get tokens for last frame
-            print(f"  last frame tokens: {last_frame_tokens.shape}")
-            
-            # Predict next tokens using only the last frame tokens
-            logits = dynamics(last_frame_tokens, actions)
-            print(f"  logits: {logits.shape}")
+            # Predict next tokens
+            logits = dynamics(initial_tokens, action.unsqueeze(0))
             next_tokens = torch.argmax(logits, dim=-1)
-            print(f"  next tokens: {next_tokens.shape}")
             
-            # Get embeddings from quantizer
+            # Decode predicted tokens
             z_q = vqvae.quantizer.embedding(next_tokens)
-            print(f"  z_q: {z_q.shape}")
+            predicted_frame = vqvae.decoder(z_q)
+            predicted_frame = predicted_frame.reshape(batch.size(0), 1, 64, 64)
             
-            # Decode the quantized embeddings
-            predicted = vqvae.decoder(z_q)
-            print(f"  raw predicted: {predicted.shape}")
+            # Convert to binary
+            predicted_frame = (torch.sigmoid(predicted_frame) > 0.5).float()
             
-            # Reshape predictions to match frame dimensions
-            predicted = predicted.reshape(batch.size(0), 1, 64, 64)  # [B, 1, H, W]
-            print(f"  final predicted: {predicted.shape}")
-            
-            # Take only the first next frame for comparison
-            next_frame = next_frames[:, 0]  # [B, H, W]
-            
-            # Convert to numpy for visualization
-            original = next_frame.cpu().numpy()
-            predicted = predicted.squeeze(1).cpu().numpy()
+            # Convert to numpy for metrics
+            actual = actual_next_frame.cpu().numpy()
+            predicted = predicted_frame.cpu().numpy()
             
             # Calculate metrics
-            accuracy, iou = calculate_metrics(original, predicted)
+            accuracy, iou = calculate_metrics(actual.squeeze(), predicted.squeeze())
+            
+            # Calculate separate accuracies for white and black pixels
+            n_white = actual.sum()
+            n_black = actual.size - n_white
+            white_accuracy = np.mean(predicted[actual == 1] == 1) if n_white > 0 else 0
+            black_accuracy = np.mean(predicted[actual == 0] == 0) if n_black > 0 else 0
+            
             total_accuracy += accuracy
             total_iou += iou
+            total_white_accuracy += white_accuracy
+            total_black_accuracy += black_accuracy
             n_sequences += 1
             
-            # Plot and save comparison
+            # Plot comparison
             plot_comparison(
-                original[0:1], predicted[0:1],
-                f'Dynamics Prediction (Accuracy: {accuracy:.4f}, IoU: {iou:.4f})',
+                actual.squeeze(),
+                predicted.squeeze(),
+                f'Dynamics Prediction (Acc: {accuracy:.3f}, IoU: {iou:.3f})',
                 save_dir / f'dynamics_prediction_{batch_idx}.png'
             )
             
-            print(f"Sequence {batch_idx}:")
+            print(f"\nSequence {batch_idx}:")
             print(f"  Accuracy: {accuracy:.4f}")
             print(f"  IoU: {iou:.4f}")
+            print(f"  White Pixel Accuracy: {white_accuracy:.4f}")
+            print(f"  Black Pixel Accuracy: {black_accuracy:.4f}")
     
+    # Calculate averages
     avg_accuracy = total_accuracy / n_sequences
     avg_iou = total_iou / n_sequences
+    avg_white_accuracy = total_white_accuracy / n_sequences
+    avg_black_accuracy = total_black_accuracy / n_sequences
+    
     print(f"\nAverage metrics across {n_sequences} sequences:")
-    print(f"  Accuracy: {avg_accuracy:.4f}")
+    print(f"  Overall Accuracy: {avg_accuracy:.4f}")
     print(f"  IoU: {avg_iou:.4f}")
+    print(f"  White Pixel Accuracy: {avg_white_accuracy:.4f}")
+    print(f"  Black Pixel Accuracy: {avg_black_accuracy:.4f}")
+    
+    return avg_accuracy, avg_iou, avg_white_accuracy, avg_black_accuracy
 
 def main():
     # Create save directory for visualizations
@@ -249,7 +251,7 @@ def main():
     test_vqvae_reconstruction(vqvae, dataloader, device, save_dir)
     
     # Test dynamics prediction
-    test_dynamics_prediction(vqvae, dynamics, lam, dataloader, device, save_dir)
+    test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir)
 
 if __name__ == "__main__":
     main() 
