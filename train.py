@@ -291,7 +291,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             entropy_loss = -0.5 * action_entropy  # Increased weight for entropy
             
             # Add contrastive loss to encourage different actions for different transitions
-            # Calculate frame differences
+            # Calculate frame differences for just the last frame transition
             frame_diffs = next_frame - prev_frames[:, -1]  # [B, H, W]
             frame_diffs = frame_diffs.reshape(frame_diffs.size(0), -1)  # [B, H*W]
             
@@ -302,7 +302,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             similarities = torch.matmul(frame_diffs, frame_diffs.t())  # [B, B]
             
             # Calculate action similarities (1 if same action, 0 if different)
-            action_sims = (indices.unsqueeze(0) == indices.unsqueeze(1)).float()
+            action_sims = (indices.unsqueeze(0) == indices.unsqueeze(1)).float()  # [B, B]
             
             # Contrastive loss: similar transitions should have different actions
             contrastive_loss = (similarities * action_sims).mean()
@@ -349,6 +349,10 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
                 print(f"  Black Pixel Accuracy: {black_accuracy.item():.4f}")
                 print(f"  Action Distribution: {torch.bincount(indices, minlength=8)}")
                 print(f"  Unique Actions: {len(torch.unique(indices))}")
+                print(f"  Frame Similarities:")
+                print(f"    Mean: {similarities.mean():.4f}")
+                print(f"    Max: {similarities.max():.4f}")
+                print(f"    Min: {similarities.min():.4f}")
                 
                 # Print frame difference statistics
                 with torch.no_grad():
