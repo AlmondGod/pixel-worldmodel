@@ -10,7 +10,7 @@ import argparse
 import numpy as np
 import gc
 from datetime import datetime
-from test_reconstruction import test_vqvae_reconstruction
+from test_reconstruction import test_vqvae_reconstruction, test_dynamics
 
 EPOCHS = 4
 SAVE_DIR = Path("saved_models")

@@ -77,8 +77,8 @@ def main():
     # Training LAM
     print("\nTraining LAM...")
     lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4, betas=(0.9, 0.9))
-    train_lam(lam, dataloader, lam_optim, save_dir)
-    # lam.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/20250210_032822/lam/checkpoint_epoch_4.pth", map_location=device, weights_only=True))
+    # train_lam(lam, dataloader, lam_optim, save_dir)
+    lam.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/20250210_074700/lam/checkpoint_epoch_4.pth", map_location=device, weights_only=True))
     
     # Clear GPU memory before training dynamics
     if device == "cuda":
