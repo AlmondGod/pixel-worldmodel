@@ -305,37 +305,53 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             # Reconstruction loss
             recon_loss = F.mse_loss(reconstructed, next_frame)
             
-            # Add stronger action diversity loss
-            action_probs = torch.bincount(indices, minlength=8).float()
-            action_probs = action_probs / action_probs.sum()
-            action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
-            max_entropy = torch.log(torch.tensor(8.0, device=device))  # Maximum possible entropy for 8 actions
-            entropy_loss = -2.0 * (action_entropy - max_entropy)  # Much stronger weight and target maximum entropy
+            # InfoNCE loss to maximize mutual information between actions and transitions
+            batch_size = prev_frames.size(0)
             
-            # Calculate frame differences for just the last frame transition
+            # Get frame transitions
             last_prev_frames = prev_frames[:, -1]  # [B, H, W]
             frame_diffs = next_frame - last_prev_frames  # [B, H, W]
-            frame_diffs = frame_diffs.reshape(frame_diffs.size(0), -1)  # [B, H*W]
-            
-            # Normalize frame differences
+            frame_diffs = frame_diffs.reshape(batch_size, -1)  # [B, H*W]
             frame_diffs = F.normalize(frame_diffs, dim=1)
             
-            # Calculate pairwise similarities between frame differences
+            # Calculate similarity matrix between all pairs of transitions
             similarities = torch.matmul(frame_diffs, frame_diffs.t())  # [B, B]
             
-            # Calculate action similarities (1 if same action, 0 if different)
-            last_actions = indices.reshape(-1)[-batch.size(0):]  # Get last action for each sequence
-            action_sims = (last_actions.unsqueeze(0) == last_actions.unsqueeze(1)).float()  # [B, B]
+            # Get last action for each sequence
+            last_actions = indices.reshape(-1)[-batch_size:]  # [B]
             
-            # Stronger contrastive loss
-            contrastive_loss = 0.5 * (similarities * action_sims).mean()  # Increased weight
+            # Calculate positive and negative masks for InfoNCE
+            pos_mask = (last_actions.unsqueeze(0) == last_actions.unsqueeze(1)).float()  # [B, B]
+            neg_mask = 1 - pos_mask
             
-            # Add L1 regularization on reconstructed frames to encourage sparsity
-            l1_loss = 0.01 * torch.abs(reconstructed).mean()
+            # InfoNCE loss (with temperature scaling)
+            temperature = 0.1
+            exp_similarities = torch.exp(similarities / temperature)
+            pos_similarities = (exp_similarities * pos_mask).sum(1)  # [B]
+            neg_similarities = (exp_similarities * neg_mask).sum(1)  # [B]
+            infonce_loss = -torch.log(pos_similarities / (pos_similarities + neg_similarities + 1e-10)).mean()
             
-            # Total loss with increased weights for diversity
-            loss = recon_loss + entropy_loss + contrastive_loss + l1_loss
+            # Action diversity loss using KL divergence to uniform distribution
+            action_probs = torch.bincount(indices, minlength=8).float()
+            action_probs = action_probs / action_probs.sum()
+            uniform_probs = torch.ones_like(action_probs) / 8.0
+            diversity_loss = F.kl_div(
+                action_probs.log(), 
+                uniform_probs, 
+                reduction='batchmean'
+            )
             
+            # Calculate action entropy
+            action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
+            
+            # Combine losses with appropriate weights
+            total_loss = (
+                1.0 * recon_loss +      # Main reconstruction objective
+                0.1 * infonce_loss +    # Action-transition mutual information
+                1.0 * diversity_loss    # Action diversity
+            )
+            
+            loss = total_loss
             loss.backward()
             optimizer.step()
             
@@ -362,9 +378,9 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             if n_batches % 10 == 0:
                 print(f"\nBatch {n_batches}/{len(dataloader)}")
                 print(f"  Recon Loss: {recon_loss.item():.4f}")
-                print(f"  Entropy Loss: {entropy_loss.item():.4f}")
-                print(f"  Contrastive Loss: {contrastive_loss.item():.4f}")
-                print(f"  L1 Loss: {l1_loss.item():.4f}")
+                print(f"  InfoNCE Loss: {infonce_loss.item():.4f}")
+                print(f"  Diversity Loss: {diversity_loss.item():.4f}")
+                print(f"  Total Loss: {total_loss.item():.4f}")
                 print(f"  Action Entropy: {action_entropy.item():.4f}")
                 print(f"  Overall Accuracy: {accuracy.item():.4f}")
                 print(f"  White Pixel Accuracy: {white_accuracy.item():.4f}")
