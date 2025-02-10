@@ -63,7 +63,7 @@ def main():
     lam = LAM().to(device)
     dynamics = MaskGITDynamics().to(device)
 
-    vqvae_path = Path("/mnt/base/pixel-worldmodel/saved_models/20250210_002948/vqvae/checkpoint_epoch_1.pth")
+    vqvae_path = Path("/mnt/base/pixel-worldmodel/saved_models/20250210_025105/vqvae/checkpoint_epoch_1.pth")
     
     # Training VQVAE with monitoring
     print("\nTraining VQVAE...")
@@ -76,8 +76,9 @@ def main():
     
     # Training LAM
     print("\nTraining LAM...")
-    lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4, betas=(0.9, 0.9))
-    train_lam(lam, dataloader, lam_optim, save_dir)
+    # lam_optim = torch.optim.AdamW(lam.parameters(), lr=3e-4, betas=(0.9, 0.9))
+    # train_lam(lam, dataloader, lam_optim, save_dir)
+    lam.load_state_dict(torch.load("/mnt/base/pixel-worldmodel/saved_models/20250210_032822/lam/checkpoint_epoch_4.pth", map_location=device, weights_only=True))
     
     # Clear GPU memory before training dynamics
     if device == "cuda":
