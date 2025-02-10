@@ -378,18 +378,18 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             entropy_factor = torch.exp(-2.0 * action_entropy)  # Increases weight when entropy is low
             entropy_loss = entropy_factor * (2.079 - action_entropy)  # 2.079 is log(8), max possible entropy
             
-            # Combine all diversity-promoting losses
+            # Combine all diversity-promoting losses with higher weights
             diversity_loss = (
-                0.5 * kl_div +          # KL divergence to uniform
-                0.5 * entropy_loss +     # Entropy maximization
-                0.3 * balance_loss       # Action balance
+                1.0 * kl_div +          # Doubled KL divergence weight
+                2.0 * entropy_loss +     # Quadrupled entropy maximization weight
+                0.5 * balance_loss       # Slightly increased balance weight
             )
             
-            # Combine losses with adjusted weights
+            # Combine losses with adjusted weights - much stronger diversity constraint
             total_loss = (
                 1.0 * recon_loss +      # Main reconstruction objective
-                0.5 * infonce_loss +    # Stronger InfoNCE to couple actions to transitions
-                1.0 * diversity_loss    # Stronger diversity constraint
+                0.5 * infonce_loss +    # Keep InfoNCE weight
+                2.0 * diversity_loss    # Doubled overall diversity weight
             )
             
             # Add gradient penalty to prevent collapse
