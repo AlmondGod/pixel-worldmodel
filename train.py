@@ -290,9 +290,9 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
             entropy_loss = -0.5 * action_entropy  # Increased weight for entropy
             
-            # Add contrastive loss to encourage different actions for different transitions
             # Calculate frame differences for just the last frame transition
-            frame_diffs = next_frame - prev_frames[:, -1]  # [B, H, W]
+            last_prev_frames = prev_frames[:, -1]  # [B, H, W]
+            frame_diffs = next_frame - last_prev_frames  # [B, H, W]
             frame_diffs = frame_diffs.reshape(frame_diffs.size(0), -1)  # [B, H*W]
             
             # Normalize frame differences
@@ -302,17 +302,17 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             similarities = torch.matmul(frame_diffs, frame_diffs.t())  # [B, B]
             
             # Calculate action similarities (1 if same action, 0 if different)
-            action_sims = (indices.unsqueeze(0) == indices.unsqueeze(1)).float()  # [B, B]
+            last_actions = indices.reshape(-1)[-batch.size(0):]  # Get last action for each sequence
+            action_sims = (last_actions.unsqueeze(0) == last_actions.unsqueeze(1)).float()  # [B, B]
             
             # Contrastive loss: similar transitions should have different actions
             contrastive_loss = (similarities * action_sims).mean()
             
-            # Total loss with increased weights for diversity
-            loss = recon_loss + entropy_loss + 0.1 * contrastive_loss
-            
             # Add L1 regularization on reconstructed frames to encourage sparsity
             l1_loss = 0.01 * torch.abs(reconstructed).mean()
-            loss = loss + l1_loss
+            
+            # Total loss with increased weights for diversity
+            loss = recon_loss + entropy_loss + 0.1 * contrastive_loss + l1_loss
             
             loss.backward()
             optimizer.step()
