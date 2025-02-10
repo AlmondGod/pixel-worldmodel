@@ -171,7 +171,8 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
     
     for epoch in range(epochs):
         total_loss = 0
-        total_accuracy = 0
+        total_token_accuracy = 0
+        total_mask_ratio = 0
         n_batches = 0
         
         for batch in dataloader:
@@ -211,24 +212,33 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             # Calculate accuracy
             with torch.no_grad():
                 pred_indices = torch.argmax(pred_tokens, dim=-1)
-                accuracy = (pred_indices == target_tokens).float().mean()
-                total_accuracy += accuracy.item()
+                token_accuracy = (pred_indices == target_tokens).float().mean()
+                total_token_accuracy += token_accuracy.item()
+                
+                # Track unique tokens and predictions
+                n_unique_targets = len(torch.unique(target_tokens))
+                n_unique_preds = len(torch.unique(pred_indices))
             
             optimizer.step()
             
             total_loss += loss.item()
+            total_mask_ratio += mask_ratio
             n_batches += 1
             
             # Print batch statistics
             if n_batches % 10 == 0:
-                print(f"Batch {n_batches}")
+                print(f"\nBatch {n_batches}/{len(dataloader)}")
                 print(f"  Loss: {loss.item():.4f}")
-                print(f"  Token Accuracy: {accuracy.item():.4f}")
+                print(f"  Token Accuracy: {token_accuracy.item():.4f}")
                 print(f"  Mask Ratio: {mask_ratio:.2f}")
+                print(f"  Unique Target Tokens: {n_unique_targets}")
+                print(f"  Unique Predicted Tokens: {n_unique_preds}")
+                print(f"  Action Distribution: {torch.bincount(actions)}")
         
         print(f"\nEpoch {epoch}")
         print(f"  Average Loss: {total_loss/n_batches:.4f}")
-        print(f"  Average Token Accuracy: {total_accuracy/n_batches:.4f}")
+        print(f"  Average Token Accuracy: {total_token_accuracy/n_batches:.4f}")
+        print(f"  Average Mask Ratio: {total_mask_ratio/n_batches:.2f}")
         
         # Evaluate on test set
         print("\nEvaluating dynamics model...")
@@ -254,6 +264,9 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
     model.train()
     for epoch in range(epochs):
         total_loss = 0
+        total_accuracy = 0
+        total_white_accuracy = 0
+        total_black_accuracy = 0
         n_batches = 0
         
         for batch in dataloader:
@@ -265,19 +278,48 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             next_frame = batch[:, -1]    # [B, H, W]
             
             # Forward pass
-            reconstructed, _, _ = model(prev_frames, next_frame)
+            reconstructed, actions_quantized, indices = model(prev_frames, next_frame)
             
             # Reconstruction loss
             loss = F.mse_loss(reconstructed, next_frame)
             loss.backward()
             optimizer.step()
             
+            # Calculate accuracies
+            with torch.no_grad():
+                predictions = (reconstructed > 0.5).float()
+                accuracy = (predictions == next_frame).float().mean()
+                
+                # Calculate separate accuracies for white and black pixels
+                white_mask = next_frame == 1
+                black_mask = next_frame == 0
+                white_accuracy = (predictions[white_mask] == 1).float().mean() if white_mask.any() else torch.tensor(0.0)
+                black_accuracy = (predictions[black_mask] == 0).float().mean() if black_mask.any() else torch.tensor(0.0)
+                
+                total_accuracy += accuracy.item()
+                total_white_accuracy += white_accuracy.item()
+                total_black_accuracy += black_accuracy.item()
+            
             total_loss += loss.item()
             n_batches += 1
             
-        print(f"Epoch {epoch}, Loss: {total_loss/n_batches:.4f}")
+            # Print batch statistics
+            if n_batches % 10 == 0:
+                print(f"\nBatch {n_batches}/{len(dataloader)}")
+                print(f"  Loss: {loss.item():.4f}")
+                print(f"  Overall Accuracy: {accuracy.item():.4f}")
+                print(f"  White Pixel Accuracy: {white_accuracy.item():.4f}")
+                print(f"  Black Pixel Accuracy: {black_accuracy.item():.4f}")
+                print(f"  Unique Actions: {len(torch.unique(indices))}")
         
-        # Save checkpoint every CHECKPOINT_EVERY epochs and at the final epoch
+        # Print epoch statistics
+        print(f"\nEpoch {epoch}")
+        print(f"  Average Loss: {total_loss/n_batches:.4f}")
+        print(f"  Average Accuracy: {total_accuracy/n_batches:.4f}")
+        print(f"  Average White Accuracy: {total_white_accuracy/n_batches:.4f}")
+        print(f"  Average Black Accuracy: {total_black_accuracy/n_batches:.4f}")
+        
+        # Save checkpoint
         if (epoch + 1) % CHECKPOINT_EVERY == 0 or epoch == epochs - 1:
             save_checkpoint(model, "lam", epoch + 1, save_dir)
 
