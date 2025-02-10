@@ -14,7 +14,7 @@ from test_reconstruction import test_vqvae_reconstruction
 
 EPOCHS = 4
 SAVE_DIR = Path("saved_models")
-BATCH_SIZE = 4  # Reduced from 32
+BATCH_SIZE = 8  # Reduced from 32
 GRADIENT_ACCUMULATION_STEPS = 2  # Reduced from 16
 CHECKPOINT_EVERY = 1
 
