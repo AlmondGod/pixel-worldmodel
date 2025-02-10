@@ -135,9 +135,10 @@ class VQVAE(nn.Module):
         n_heads=4,          # Keep 4 heads for multi-scale feature learning
         n_layers=4,         # Keep 4 layers for hierarchical features
         patch_size=4,       # 4x4 patches (good balance for Pong)
-        n_codes=64,         # Increased from 16 to 32
-        code_dim=16,        # Keep same embedding size
-        commitment_weight=0.5  # Increased commitment for better codebook usage
+        n_codes=16,         # Number of codebook vectors
+        code_dim=32,        # Keep same embedding size
+        commitment_weight=0.5,  # Commitment weight for VQ
+        threshold=0.5       # Threshold for binary output
     ):
         super().__init__()
         
@@ -163,8 +164,11 @@ class VQVAE(nn.Module):
                 ),
                 num_layers=n_layers
             ),
-            nn.Linear(dim, patch_size * patch_size)
+            nn.Linear(dim, patch_size * patch_size),
+            nn.Sigmoid()  # Add sigmoid to get values between 0 and 1
         )
+        
+        self.threshold = threshold
         
     def forward(self, x):
         # Encode
@@ -178,5 +182,9 @@ class VQVAE(nn.Module):
         recon = self.decoder(z_q)
         recon = rearrange(recon, '(b f) (h w) (p1 p2) -> b f (h p1) (w p2)',
                          f=x.size(1), h=16, w=16, p1=4, p2=4)
+        
+        # Threshold to get binary output
+        with torch.no_grad():
+            recon = (recon > self.threshold).float()
         
         return recon, indices, vq_loss, perplexity 
