@@ -267,6 +267,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
         total_accuracy = 0
         total_white_accuracy = 0
         total_black_accuracy = 0
+        total_action_entropy = 0
         n_batches = 0
         
         for batch in dataloader:
@@ -281,7 +282,16 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             reconstructed, actions_quantized, indices = model(prev_frames, next_frame)
             
             # Reconstruction loss
-            loss = F.mse_loss(reconstructed, next_frame)
+            recon_loss = F.mse_loss(reconstructed, next_frame)
+            
+            # Add action diversity loss
+            action_probs = torch.bincount(indices, minlength=8).float()
+            action_probs = action_probs / action_probs.sum()
+            action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
+            entropy_loss = -0.1 * action_entropy  # Encourage higher entropy
+            
+            # Total loss
+            loss = recon_loss + entropy_loss
             loss.backward()
             optimizer.step()
             
@@ -299,6 +309,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
                 total_accuracy += accuracy.item()
                 total_white_accuracy += white_accuracy.item()
                 total_black_accuracy += black_accuracy.item()
+                total_action_entropy += action_entropy.item()
             
             total_loss += loss.item()
             n_batches += 1
@@ -306,10 +317,12 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             # Print batch statistics
             if n_batches % 10 == 0:
                 print(f"\nBatch {n_batches}/{len(dataloader)}")
-                print(f"  Loss: {loss.item():.4f}")
+                print(f"  Recon Loss: {recon_loss.item():.4f}")
+                print(f"  Action Entropy: {action_entropy.item():.4f}")
                 print(f"  Overall Accuracy: {accuracy.item():.4f}")
                 print(f"  White Pixel Accuracy: {white_accuracy.item():.4f}")
                 print(f"  Black Pixel Accuracy: {black_accuracy.item():.4f}")
+                print(f"  Action Distribution: {torch.bincount(indices, minlength=8)}")
                 print(f"  Unique Actions: {len(torch.unique(indices))}")
         
         # Print epoch statistics
@@ -318,6 +331,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
         print(f"  Average Accuracy: {total_accuracy/n_batches:.4f}")
         print(f"  Average White Accuracy: {total_white_accuracy/n_batches:.4f}")
         print(f"  Average Black Accuracy: {total_black_accuracy/n_batches:.4f}")
+        print(f"  Average Action Entropy: {total_action_entropy/n_batches:.4f}")
         
         # Save checkpoint
         if (epoch + 1) % CHECKPOINT_EVERY == 0 or epoch == epochs - 1:
