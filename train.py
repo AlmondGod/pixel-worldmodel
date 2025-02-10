@@ -55,9 +55,13 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
         total_recon_loss = 0
         total_vq_loss = 0
         avg_perplexity = 0
+        total_accuracy = 0
         n_batches = 0
         
         for batch_idx, batch in enumerate(dataloader):
+            # Verify data is binary
+            assert torch.all(torch.logical_or(batch == 0, batch == 1)), "Input data must be binary (0 or 1)"
+            
             # Move batch to GPU and clear cache
             if device == "cuda":
                 torch.cuda.empty_cache()
@@ -66,12 +70,11 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
             batch = batch.to(device)
             optimizer.zero_grad()
             
-            # Forward pass=
-            recon, indices, vq_loss, perplexity = model(batch)
+            # Forward pass
+            logits, indices, vq_loss, perplexity = model(batch)
             
-            # Use binary cross entropy loss for binary data
-            # Note: recon is already binary (0 or 1) from the model
-            recon_loss = F.binary_cross_entropy_with_logits(recon, batch.float())
+            # Binary cross entropy with logits
+            recon_loss = F.binary_cross_entropy_with_logits(logits, batch)
             
             # Total loss is reconstruction loss plus VQ losses
             loss = recon_loss + vq_loss
@@ -81,6 +84,12 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
             
             # Backward pass
             loss.backward()
+            
+            # Calculate binary accuracy
+            with torch.no_grad():
+                predictions = (torch.sigmoid(logits) > 0.5).float()
+                accuracy = (predictions == batch).float().mean()
+                total_accuracy += accuracy.item()
             
             # Track metrics before clearing memory
             total_recon_loss += recon_loss.item()
@@ -99,23 +108,18 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
             
             if verbose and batch_idx % 10 == 0:
                 print(f"Batch {batch_idx}/{len(dataloader)}")
-                print(f"  Recon: {recon_loss.item():.4f}, VQ: {vq_loss.item():.4f}, "
-                      f"Perplexity: {perplexity.item():.1f}")
-                # Print binary statistics
-                with torch.no_grad():
-                    binary_recon = (recon > 0.5).float()
-                    accuracy = (binary_recon == batch).float().mean()
-                    print(f"  Binary Accuracy: {accuracy.item():.4f}")
+                print(f"  Recon: {recon_loss.item():.4f}, VQ: {vq_loss.item():.4f}")
+                print(f"  Perplexity: {perplexity.item():.1f}")
+                print(f"  Binary Accuracy: {accuracy.item():.4f}")
                 if scheduler is not None:
                     print(f"  Learning rate: {scheduler.get_last_lr()[0]:.2e}")
                 
                 # Memory stats
                 if device == "cuda":
-                    print(f"  GPU Memory: {torch.cuda.memory_allocated()/1e9:.1f}GB allocated, "
-                          f"{torch.cuda.memory_reserved()/1e9:.1f}GB reserved")
+                    print(f"  GPU Memory: {torch.cuda.memory_allocated()/1e9:.1f}GB allocated")
             
             # Clear all intermediate tensors
-            del recon, indices, vq_loss, perplexity, recon_loss, loss, batch
+            del logits, indices, vq_loss, perplexity, recon_loss, loss, batch
             if device == "cuda":
                 torch.cuda.empty_cache()
                 gc.collect()
@@ -125,25 +129,14 @@ def train_vqvae(model, dataloader, optimizer, save_dir=SAVE_DIR, scheduler=None,
         print(f"  Reconstruction Loss: {total_recon_loss/n_batches:.4f}")
         print(f"  VQ Loss: {total_vq_loss/n_batches:.4f}")
         print(f"  Average Perplexity: {avg_perplexity/n_batches:.1f}")
+        print(f"  Average Binary Accuracy: {total_accuracy/n_batches:.4f}")
         
-        # Print codebook usage statistics
-        if hasattr(model.quantizer, 'ema_cluster_size'):
-            cluster_size = model.quantizer.ema_cluster_size.cpu().numpy()
-            active_codes = (cluster_size > 1e-3).sum()
-            print(f"  Active Codes: {active_codes}/{model.quantizer.n_codes}")
-            if verbose:
-                print("  Most used codes:", np.argsort(-cluster_size)[:10])
-                print("  Usage values:", np.sort(cluster_size)[-10:])
-        
-        # Save checkpoint every CHECKPOINT_EVERY epochs and at the final epoch
+        # Save checkpoint and test reconstruction
         if (epoch + 1) % CHECKPOINT_EVERY == 0 or epoch == epochs - 1:
             save_checkpoint(model, "vqvae", epoch + 1, save_dir)
+            model.eval()
             test_vqvae_reconstruction(model, dataloader, device, save_dir)
-            
-        # Clear memory at end of epoch
-        if device == "cuda":
-            torch.cuda.empty_cache()
-            gc.collect()
+            model.train()
 
 def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cuda"):
     model.train()

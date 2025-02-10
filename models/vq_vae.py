@@ -151,26 +151,31 @@ class VQVAE(nn.Module):
             temp=0.5  # Lower temperature for sharper code assignments
         )
         
+        # Modified decoder to better handle binary outputs
         self.decoder = nn.Sequential(
             nn.Linear(code_dim, dim),
-            nn.GELU(),  # Keep GELU for better gradient flow
+            nn.GELU(),
             nn.TransformerEncoder(
                 nn.TransformerEncoderLayer(
                     d_model=dim,
                     nhead=n_heads,
                     dim_feedforward=dim*4,
                     batch_first=True,
-                    dropout=0.1  # Keep dropout for regularization
+                    dropout=0.1
                 ),
                 num_layers=n_layers
             ),
             nn.Linear(dim, patch_size * patch_size),
-            nn.Sigmoid()  # Add sigmoid to get values between 0 and 1
+            # Remove sigmoid since we'll use logits for BCE loss
         )
         
         self.threshold = threshold
         
     def forward(self, x):
+        # Verify input is binary
+        if self.training:
+            assert torch.all(torch.logical_or(x == 0, x == 1)), "Input must be binary (0 or 1)"
+        
         # Encode
         z = self.encoder(x)  # [b*f, n, dim]
         z = self.pre_quantize(z)  # [b*f, n, code_dim]
@@ -178,19 +183,13 @@ class VQVAE(nn.Module):
         # Quantize
         z_q, indices, vq_loss, perplexity = self.quantizer(z)
         
-        # Decode
-        recon = self.decoder(z_q)
-        recon = rearrange(recon, '(b f) (h w) (p1 p2) -> b f (h p1) (w p2)',
+        # Decode to logits
+        logits = self.decoder(z_q)
+        logits = rearrange(logits, '(b f) (h w) (p1 p2) -> b f (h p1) (w p2)',
                          f=x.size(1), h=16, w=16, p1=4, p2=4)
         
-        # Get continuous values for loss calculation
-        continuous_recon = recon.clone()
+        # For inference, convert to binary
+        if not self.training:
+            return (torch.sigmoid(logits) > self.threshold).float(), indices, vq_loss, perplexity
         
-        # Apply hard thresholding for binary output
-        recon = (recon > self.threshold).float()
-        
-        # During training, use straight-through estimator to allow gradients
-        if self.training:
-            recon = continuous_recon + (recon - continuous_recon).detach()
-        
-        return recon, indices, vq_loss, perplexity 
+        return logits, indices, vq_loss, perplexity 

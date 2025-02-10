@@ -14,24 +14,28 @@ def plot_comparison(original, reconstructed, title, save_path):
     n_frames = min(8, original.shape[0])  # Show up to 8 frames
     plt.figure(figsize=(20, 4))
     
+    # Verify inputs are binary
+    assert np.all(np.logical_or(original == 0, original == 1)), "Original must be binary"
+    assert np.all(np.logical_or(reconstructed == 0, reconstructed == 1)), "Reconstructed must be binary"
+    
     for i in range(n_frames):
         # Original
         plt.subplot(2, n_frames, i + 1)
-        plt.imshow(1 - original[i], cmap='binary', vmin=0, vmax=1)  # Invert colors with 1 - original
+        plt.imshow(1 - original[i], cmap='binary', vmin=0, vmax=1, interpolation='nearest')
         plt.axis('off')
         if i == 0:
             plt.title('Original')
             
         # Reconstructed
         plt.subplot(2, n_frames, n_frames + i + 1)
-        plt.imshow(1 - reconstructed[i], cmap='binary', vmin=0, vmax=1)  # Invert colors with 1 - reconstructed
+        plt.imshow(1 - reconstructed[i], cmap='binary', vmin=0, vmax=1, interpolation='nearest')
         plt.axis('off')
         if i == 0:
             plt.title('Reconstructed')
     
     plt.suptitle(title)
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 
 def calculate_metrics(original, reconstructed):
@@ -66,14 +70,19 @@ def test_vqvae_reconstruction(model, dataloader, device, save_dir):
                 
             batch = batch.to(device)
             
-            # Get reconstruction
+            # Get reconstruction (model outputs binary values in eval mode)
             recon, _, vq_loss, perplexity = model(batch)
+            
+            # Verify outputs are binary
+            assert torch.all(torch.logical_or(recon == 0, recon == 1)), "Model outputs must be binary (0 or 1)"
             
             # Convert to numpy for visualization
             original = batch.cpu().numpy()
             reconstructed = recon.cpu().numpy()
-
-            print(f"reconstructed: {reconstructed}")
+            
+            # Verify numpy arrays are binary
+            assert np.all(np.logical_or(original == 0, original == 1)), "Original must be binary"
+            assert np.all(np.logical_or(reconstructed == 0, reconstructed == 1)), "Reconstructed must be binary"
             
             # Calculate metrics
             accuracy, iou = calculate_metrics(original, reconstructed)
@@ -93,6 +102,10 @@ def test_vqvae_reconstruction(model, dataloader, device, save_dir):
             print(f"  IoU: {iou:.4f}")
             print(f"  VQ Loss: {vq_loss.item():.4f}")
             print(f"  Codebook Perplexity: {perplexity.item():.2f}")
+            
+            # Debug prints
+            print(f"  Original unique values: {np.unique(original)}")
+            print(f"  Reconstructed unique values: {np.unique(reconstructed)}")
     
     avg_accuracy = total_accuracy / n_sequences
     avg_iou = total_iou / n_sequences

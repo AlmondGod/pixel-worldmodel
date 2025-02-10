@@ -37,7 +37,7 @@ Note: Ensure splits don't contain overlapping time periods
  - Attention Heads: 4
 
 - **Codebook**:
- - Number of Codes: 256 (reduced due to binary data)
+ - Number of Codes: 32 (reduced due to binary data)
  - Embedding Size: 16
  - Latent Dimension: 16
 
