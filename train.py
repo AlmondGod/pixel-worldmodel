@@ -329,7 +329,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             frame_diffs = frame_diffs.reshape(batch_size, -1)  # [B, H*W]
             frame_diffs = F.normalize(frame_diffs, dim=1)
             
-            # Calculate similarity matrix between all pairs of transitions
+            # Calculate similarity matrix between transitions
             similarities = torch.matmul(frame_diffs, frame_diffs.t())  # [B, B]
             
             # Get last action for each sequence
@@ -339,31 +339,62 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             pos_mask = (last_actions.unsqueeze(0) == last_actions.unsqueeze(1)).float()  # [B, B]
             neg_mask = 1 - pos_mask
             
-            # Action diversity loss using KL divergence to uniform distribution
+            # InfoNCE loss with stronger constraints
+            temperature = 0.1  # Sharp temperature for clear distinctions
+            exp_similarities = torch.exp(similarities / temperature)
+            
+            # Exclude self-similarities
+            self_mask = torch.eye(batch_size, device=device)
+            exp_similarities = exp_similarities * (1 - self_mask)
+            
+            # Calculate InfoNCE loss with stability improvements
+            pos_term = (exp_similarities * pos_mask).sum(1) + 1e-6
+            neg_term = (exp_similarities * neg_mask).sum(1) + 1e-6
+            infonce_loss = -torch.log(pos_term / (pos_term + neg_term)).mean()
+            
+            # Calculate action distribution and entropy
             action_probs = torch.bincount(indices, minlength=8).float()
             action_probs = action_probs / action_probs.sum()
-            uniform_probs = torch.ones_like(action_probs) / 8.0
-            
-            # Calculate action entropy for monitoring
             action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
             
-            # Modified diversity loss to prevent inf values
-            # Instead of KL divergence, use direct entropy maximization with stronger weight
-            diversity_loss = -2.0 * (action_entropy - torch.log(torch.tensor(8.0)).to(device))
+            # Target uniform distribution
+            uniform_probs = torch.ones_like(action_probs) / 8.0
             
-            # Increase InfoNCE temperature for stronger action-transition coupling
-            temperature = 0.5  # Increased from 0.1
-            exp_similarities = torch.exp(similarities / temperature)
-            pos_similarities = (exp_similarities * pos_mask).sum(1)  # [B]
-            neg_similarities = (exp_similarities * neg_mask).sum(1)  # [B]
-            infonce_loss = -torch.log(pos_similarities / (pos_similarities + neg_similarities + 1e-10)).mean()
-            
-            # Combine losses with rebalanced weights
-            total_loss = (
-                1.0 * recon_loss +       # Main reconstruction objective
-                1.0 * infonce_loss +     # Increased from 0.1 - stronger action-transition coupling
-                2.0 * diversity_loss     # Increased weight on diversity
+            # KL divergence from uniform distribution (stronger regularization)
+            kl_div = F.kl_div(
+                torch.log(action_probs + 1e-10),
+                uniform_probs,
+                reduction='sum'
             )
+            
+            # Additional diversity constraints
+            action_counts = torch.bincount(indices, minlength=8)
+            min_count = action_counts.min()
+            max_count = action_counts.max()
+            count_ratio = max_count.float() / (min_count.float() + 1e-6)
+            balance_loss = torch.log(count_ratio + 1.0)  # Penalize imbalanced usage
+            
+            # Entropy maximization with stronger weight when entropy is low
+            entropy_factor = torch.exp(-2.0 * action_entropy)  # Increases weight when entropy is low
+            entropy_loss = entropy_factor * (2.079 - action_entropy)  # 2.079 is log(8), max possible entropy
+            
+            # Combine all diversity-promoting losses
+            diversity_loss = (
+                0.5 * kl_div +          # KL divergence to uniform
+                0.5 * entropy_loss +     # Entropy maximization
+                0.3 * balance_loss       # Action balance
+            )
+            
+            # Combine losses with adjusted weights
+            total_loss = (
+                1.0 * recon_loss +      # Main reconstruction objective
+                0.5 * infonce_loss +    # Stronger InfoNCE to couple actions to transitions
+                1.0 * diversity_loss    # Stronger diversity constraint
+            )
+            
+            # Add gradient penalty to prevent collapse
+            if total_loss < 0.1:  # If loss is too small, likely heading to collapse
+                total_loss = total_loss + 0.1 * torch.sum(torch.abs(reconstructed))  # L1 regularization
             
             loss = total_loss
             loss.backward()
@@ -393,7 +424,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
                 print(f"\nBatch {n_batches}/{len(dataloader)}")
                 print(f"  Recon Loss: {recon_loss.item():.4f}")
                 print(f"  InfoNCE Loss: {infonce_loss.item():.4f}")
-                print(f"  Diversity Loss: {diversity_loss.item():.4f}")
+                print(f"  Entropy Loss: {entropy_loss.item():.4f}")
                 print(f"  Total Loss: {total_loss.item():.4f}")
                 print(f"  Action Entropy: {action_entropy.item():.4f}")
                 print(f"  Overall Accuracy: {accuracy.item():.4f}")
