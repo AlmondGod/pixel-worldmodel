@@ -20,8 +20,8 @@ class ActionVectorQuantizer(nn.Module):
         min_encoding_indices = torch.argmin(d, dim=-1)
         z_q = self.embedding(min_encoding_indices)
         
-        # Straight through estimator
-        z_q = z + (z_q - z).detach()
+        # Straight through estimator with gradient support
+        z_q = z + (z_q.detach() - z.detach())  # Modified to preserve gradients
         
         return z_q, min_encoding_indices
 

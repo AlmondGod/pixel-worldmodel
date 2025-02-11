@@ -317,15 +317,15 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             # Forward pass
             reconstructed, actions_quantized, indices = model(prev_frames, next_frame)
             
-            # Reconstruction loss
-            recon_loss = F.mse_loss(reconstructed, next_frame)
+            # Reconstruction loss with requires_grad=True
+            recon_loss = F.mse_loss(reconstructed.float(), next_frame.float())
             
             # InfoNCE loss to maximize mutual information between actions and transitions
             batch_size = prev_frames.size(0)
             
             # Get frame transitions
             last_prev_frames = prev_frames[:, -1]  # [B, H, W]
-            frame_diffs = next_frame - last_prev_frames  # [B, H, W]
+            frame_diffs = next_frame.float() - last_prev_frames.float()  # [B, H, W]
             frame_diffs = frame_diffs.reshape(batch_size, -1)  # [B, H*W]
             frame_diffs = F.normalize(frame_diffs, dim=1)
             
@@ -369,9 +369,9 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             
             # Additional diversity constraints
             action_counts = torch.bincount(indices, minlength=4)
-            min_count = action_counts.min()
-            max_count = action_counts.max()
-            count_ratio = max_count.float() / (min_count.float() + 1e-6)
+            min_count = action_counts.min().float()
+            max_count = action_counts.max().float()
+            count_ratio = max_count / (min_count + 1e-6)
             balance_loss = torch.log(count_ratio + 1.0)  # Penalize imbalanced usage
             
             # Entropy maximization with stronger weight when entropy is low
@@ -394,7 +394,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             
             # Add gradient penalty to prevent collapse
             if total_loss < 0.1:  # If loss is too small, likely heading to collapse
-                total_loss = total_loss + 0.1 * torch.sum(torch.abs(reconstructed))  # L1 regularization
+                total_loss = total_loss + 0.1 * torch.sum(torch.abs(reconstructed.float()))  # L1 regularization
             
             loss = total_loss
             loss.backward()
