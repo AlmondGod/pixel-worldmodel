@@ -337,9 +337,9 @@ class WorldModelInference:
 
 def main():
     parser = argparse.ArgumentParser(description='World Model Inference')
-    parser.add_argument('--vqvae', type=str, default='saved_models/vqvae_20250208_221815.pth', help='Path to VQVAE weights')
-    parser.add_argument('--lam', type=str, default='saved_models/lam_20250208_222232.pth', help='Path to LAM weights')
-    parser.add_argument('--dynamics', type=str, default='saved_models/dynamics_20250208_222811.pth', help='Path to Dynamics weights')
+    parser.add_argument('--vqvae', type=str, default='/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/:mnt:base:pixel-worldmodel:saved_models:20250210_025105:vqvae:checkpoint_epoch_1.pth', help='Path to VQVAE weights')
+    parser.add_argument('--lam', type=str, default='/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/lam', help='Path to LAM weights')
+    parser.add_argument('--dynamics', type=str, default='/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/dynamics', help='Path to Dynamics weights')
     parser.add_argument('--video', type=str, default='pong.mp4', help='Path to initial video')
     parser.add_argument('--mode', type=str, choices=['interactive', 'autonomous'], 
                        default='autonomous', help='Inference mode')

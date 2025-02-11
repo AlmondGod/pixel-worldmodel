@@ -228,15 +228,15 @@ def main():
     for model_path in models_dir.glob("*.pth"):
         print(f"  {model_path}")
     
-    # try:
+    try:
         # Load the timestamped models instead of the generic ones
-        # vqvae.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/28081027/vqvae_20250209_080614.pth", map_location=device))
-        # dynamics.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/28081027/dynamics_20250209_081759.pth", map_location=device))
-        # lam.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/28081027/lam_20250209_081027.pth", map_location=device))
-    # except Exception as e:
-    #     print(f"\nError loading models: {str(e)}")
-    #     print("\nTip: Make sure you've run training first and have model files in saved_models/")
-    #     return
+        vqvae.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/:mnt:base:pixel-worldmodel:saved_models:20250210_025105:vqvae:checkpoint_epoch_1.pth", map_location=device))
+        dynamics.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/dynamics", map_location=device))
+        lam.load_state_dict(torch.load("/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/lam", map_location=device))
+    except Exception as e:
+        print(f"\nError loading models: {str(e)}")
+        print("\nTip: Make sure you've run training first and have model files in saved_models/")
+        return
     
     # Load dataset
     try:
