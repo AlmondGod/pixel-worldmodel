@@ -26,7 +26,7 @@ class ActionVectorQuantizer(nn.Module):
         return z_q, min_encoding_indices
 
 class LAMDecoder(nn.Module):
-    def __init__(self, dim=256, n_heads=4, n_layers=4):
+    def __init__(self, dim=256, n_heads=4, n_layers=4, threshold=0.5):
         super().__init__()
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
@@ -38,6 +38,7 @@ class LAMDecoder(nn.Module):
             num_layers=n_layers
         )
         self.output = nn.Linear(dim, 64*64)  # Reconstruct frame
+        self.threshold = threshold
         
     def forward(self, x, actions):
         # x shape: [b, f, n, d] or [b*f, n, d]
@@ -54,11 +55,15 @@ class LAMDecoder(nn.Module):
         # Add action embeddings
         x = x + actions.unsqueeze(1)
         x = self.transformer(x)
-        x = self.output(x.mean(dim=1))  # Average over sequence dimension
+        logits = self.output(x.mean(dim=1))  # Average over sequence dimension
         
         # Reshape to match target frame dimensions [b, h, w]
-        x = x.reshape(original_batch_size, 64, 64)  # Use original batch size
-        return x
+        logits = logits.reshape(original_batch_size, 64, 64)
+        
+        # Always output binary values
+        output = (torch.sigmoid(logits) > self.threshold).float()
+        
+        return output
 
 class LAM(nn.Module):
     def __init__(self, dim=256, n_heads=4, n_layers=4):  # Keep same transformer params

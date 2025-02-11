@@ -154,12 +154,19 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             predicted_frame = vqvae.decoder(z_q)
             predicted_frame = predicted_frame.reshape(batch.size(0), 1, 64, 64)
             
-            # Convert to binary
+            # Ensure binary output with proper thresholding
             predicted_frame = (torch.sigmoid(predicted_frame) > 0.5).float()
+            
+            # Verify binary output
+            assert torch.all(torch.logical_or(predicted_frame == 0, predicted_frame == 1)), "Predicted frame must be binary"
             
             # Convert to numpy for metrics
             actual = actual_next_frame.cpu().numpy()
             predicted = predicted_frame.cpu().numpy()
+            
+            # Verify numpy arrays are binary
+            assert np.all(np.logical_or(actual == 0, actual == 1)), "Actual frame must be binary"
+            assert np.all(np.logical_or(predicted == 0, predicted == 1)), "Predicted frame must be binary"
             
             # Calculate metrics
             accuracy, iou = calculate_metrics(actual.squeeze(), predicted.squeeze())

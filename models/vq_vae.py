@@ -188,8 +188,7 @@ class VQVAE(nn.Module):
         logits = rearrange(logits, '(b f) (h w) (p1 p2) -> b f (h p1) (w p2)',
                          f=x.size(1), h=16, w=16, p1=4, p2=4)
         
-        # For inference, convert to binary
-        if not self.training:
-            return (torch.sigmoid(logits) > self.threshold).float(), indices, vq_loss, perplexity
+        # Always threshold for binary output
+        output = (torch.sigmoid(logits) > self.threshold).float()
         
-        return logits, indices, vq_loss, perplexity 
+        return output, indices, vq_loss, perplexity 
