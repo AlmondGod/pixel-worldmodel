@@ -315,10 +315,10 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             next_frame = batch[:, -1]    # [B, H, W]
             
             # Forward pass
-            reconstructed, actions_quantized, indices = model(prev_frames, next_frame)
+            logits, actions_quantized, indices = model(prev_frames, next_frame)
             
-            # Reconstruction loss with requires_grad=True
-            recon_loss = F.mse_loss(reconstructed.float(), next_frame.float())
+            # Binary cross entropy loss with logits
+            recon_loss = F.binary_cross_entropy_with_logits(logits, next_frame)
             
             # InfoNCE loss to maximize mutual information between actions and transitions
             batch_size = prev_frames.size(0)
@@ -394,7 +394,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             
             # Add gradient penalty to prevent collapse
             if total_loss < 0.1:  # If loss is too small, likely heading to collapse
-                total_loss = total_loss + 0.1 * torch.sum(torch.abs(reconstructed.float()))  # L1 regularization
+                total_loss = total_loss + 0.1 * torch.sum(torch.abs(torch.sigmoid(logits)))  # L1 regularization
             
             loss = total_loss
             loss.backward()
@@ -402,7 +402,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             
             # Calculate accuracies
             with torch.no_grad():
-                predictions = (reconstructed > 0.5).float()
+                predictions = (torch.sigmoid(logits) > 0.5).float()
                 accuracy = (predictions == next_frame).float().mean()
                 
                 # Calculate separate accuracies for white and black pixels
@@ -430,7 +430,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
                 print(f"  Overall Accuracy: {accuracy.item():.4f}")
                 print(f"  White Pixel Accuracy: {white_accuracy.item():.4f}")
                 print(f"  Black Pixel Accuracy: {black_accuracy.item():.4f}")
-                print(f"  Action Distribution: {torch.bincount(indices, minlength=8)}")
+                print(f"  Action Distribution: {torch.bincount(indices, minlength=4)}")
                 print(f"  Unique Actions: {len(torch.unique(indices))}")
                 print(f"  Frame Similarities:")
                 print(f"    Mean: {similarities.mean():.4f}")

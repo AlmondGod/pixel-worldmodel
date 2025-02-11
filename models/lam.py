@@ -60,10 +60,15 @@ class LAMDecoder(nn.Module):
         # Reshape to match target frame dimensions [b, h, w]
         logits = logits.reshape(original_batch_size, 64, 64)
         
-        # Always output binary values
-        output = (torch.sigmoid(logits) > self.threshold).float()
-        
-        return output
+        if self.training:
+            # During training, return logits for BCE loss
+            return logits
+        else:
+            # During inference, always return binary values
+            binary_output = (torch.sigmoid(logits) > self.threshold).float()
+            # Add assertion to guarantee binary output
+            assert torch.all(torch.logical_or(binary_output == 0, binary_output == 1)), "Output must be binary (0 or 1)"
+            return binary_output
 
 class LAM(nn.Module):
     def __init__(self, dim=256, n_heads=4, n_layers=4):  # Keep same transformer params
@@ -79,10 +84,14 @@ class LAM(nn.Module):
             frames: [batch, time, height, width] Previous frames
             next_frames: [batch, height, width] Next frame to predict
         Returns:
-            reconstructed: Reconstructed next frame
+            reconstructed: Reconstructed next frame logits
             actions: Quantized actions
             indices: Action indices
         """
+        # Ensure inputs are float and require gradients
+        frames = frames.float().requires_grad_(True)
+        next_frames = next_frames.float().requires_grad_(True)
+        
         # Encode all frames
         b, t, h, w = frames.shape
         all_frames = torch.cat([frames, next_frames.unsqueeze(1)], dim=1)
@@ -99,7 +108,6 @@ class LAM(nn.Module):
         actions_quantized = actions_quantized.reshape(b, t, -1)
         
         # Decode for training (use last frame's actions)
-        # Only pass the batch's worth of features and actions
         reconstructed = self.decoder(
             features[:, -2:-1],  # Use only the last frame's features [b, 1, n, d]
             actions_quantized[:, -1]  # Use only the last frame's actions [b, d]
