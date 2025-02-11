@@ -320,27 +320,31 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             # Binary cross entropy loss with logits
             recon_loss = F.binary_cross_entropy_with_logits(logits, next_frame)
             
+            # Get diversity loss from model
+            diversity_loss = model.current_diversity_loss
+            action_entropy = model.current_entropy
+            
             # InfoNCE loss to maximize mutual information between actions and transitions
             batch_size = prev_frames.size(0)
             
-            # Get frame transitions
-            last_prev_frames = prev_frames[:, -1]  # [B, H, W]
-            frame_diffs = next_frame.float() - last_prev_frames.float()  # [B, H, W]
-            frame_diffs = frame_diffs.reshape(batch_size, -1)  # [B, H*W]
-            frame_diffs = F.normalize(frame_diffs, dim=1)
+            # Get frame transitions with stronger normalization
+            last_prev_frames = prev_frames[:, -1]
+            frame_diffs = next_frame.float() - last_prev_frames.float()
+            frame_diffs = frame_diffs.reshape(batch_size, -1)
+            frame_diffs = F.normalize(frame_diffs, dim=1, p=2)  # L2 normalize
             
             # Calculate similarity matrix between transitions
-            similarities = torch.matmul(frame_diffs, frame_diffs.t())  # [B, B]
+            similarities = torch.matmul(frame_diffs, frame_diffs.t())
             
             # Get last action for each sequence
-            last_actions = indices.reshape(-1)[-batch_size:]  # [B]
+            last_actions = indices.reshape(-1)[-batch_size:]
             
-            # Calculate positive and negative masks for InfoNCE
-            pos_mask = (last_actions.unsqueeze(0) == last_actions.unsqueeze(1)).float()  # [B, B]
+            # Calculate positive and negative masks for InfoNCE with stronger temperature
+            pos_mask = (last_actions.unsqueeze(0) == last_actions.unsqueeze(1)).float()
             neg_mask = 1 - pos_mask
             
-            # InfoNCE loss with stronger constraints
-            temperature = 0.1  # Sharp temperature for clear distinctions
+            # InfoNCE loss with sharper temperature
+            temperature = 0.1  # Sharper temperature for better discrimination
             exp_similarities = torch.exp(similarities / temperature)
             
             # Exclude self-similarities
@@ -350,54 +354,30 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             # Calculate InfoNCE loss with stability improvements
             pos_term = (exp_similarities * pos_mask).sum(1) + 1e-6
             neg_term = (exp_similarities * neg_mask).sum(1) + 1e-6
-            infonce_loss = -torch.log(pos_term / (pos_term + neg_term)).mean()
+            infonce_loss = -torch.log(pos_term / (pos_term + neg_term + 1e-6)).mean()
             
-            # Calculate action distribution and entropy
-            action_probs = torch.bincount(indices, minlength=4).float()
-            action_probs = action_probs / action_probs.sum()
-            action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
+            # Dynamic loss weighting based on action entropy
+            # If entropy is very low, increase diversity weight
+            entropy_factor = torch.exp(-2.0 * action_entropy)
+            diversity_weight = 2.0 * entropy_factor  # Base weight is 2.0, increases when entropy is low
             
-            # Target uniform distribution
-            uniform_probs = torch.ones_like(action_probs) / 4.0
-            
-            # KL divergence from uniform distribution (stronger regularization)
-            kl_div = F.kl_div(
-                torch.log(action_probs + 1e-10),
-                uniform_probs,
-                reduction='sum'
-            )
-            
-            # Additional diversity constraints
-            action_counts = torch.bincount(indices, minlength=4)
-            min_count = action_counts.min().float()
-            max_count = action_counts.max().float()
-            count_ratio = max_count / (min_count + 1e-6)
-            balance_loss = torch.log(count_ratio + 1.0)  # Penalize imbalanced usage
-            
-            # Entropy maximization with stronger weight when entropy is low
-            entropy_factor = torch.exp(-2.0 * action_entropy)  # Increases weight when entropy is low
-            entropy_loss = entropy_factor * (1.386 - action_entropy)  # 1.386 is log(4), max possible entropy
-            
-            # Combine all diversity-promoting losses with higher weights
-            diversity_loss = (
-                1.0 * kl_div +          # Doubled KL divergence weight
-                2.0 * entropy_loss +     # Quadrupled entropy maximization weight
-                0.5 * balance_loss       # Slightly increased balance weight
-            )
-            
-            # Combine losses with adjusted weights - much stronger diversity constraint
+            # Combine losses with dynamic weights
             total_loss = (
-                1.0 * recon_loss +      # Main reconstruction objective
-                0.5 * infonce_loss +    # Keep InfoNCE weight
-                2.0 * diversity_loss    # Doubled overall diversity weight
+                1.0 * recon_loss +           # Keep reconstruction weight constant
+                1.0 * infonce_loss +         # Increased InfoNCE weight
+                diversity_weight * diversity_loss  # Dynamic diversity weight
             )
             
             # Add gradient penalty to prevent collapse
-            if total_loss < 0.1:  # If loss is too small, likely heading to collapse
-                total_loss = total_loss + 0.1 * torch.sum(torch.abs(torch.sigmoid(logits)))  # L1 regularization
+            if total_loss < 0.1:
+                total_loss = total_loss + 0.1 * torch.sum(torch.abs(torch.sigmoid(logits)))
             
             loss = total_loss
             loss.backward()
+            
+            # Gradient clipping to prevent instability
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            
             optimizer.step()
             
             # Calculate accuracies
@@ -405,7 +385,6 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
                 predictions = (torch.sigmoid(logits) > 0.5).float()
                 accuracy = (predictions == next_frame).float().mean()
                 
-                # Calculate separate accuracies for white and black pixels
                 white_mask = next_frame == 1
                 black_mask = next_frame == 0
                 white_accuracy = (predictions[white_mask] == 1).float().mean() if white_mask.any() else torch.tensor(0.0)
@@ -419,28 +398,25 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             total_loss += loss.item()
             n_batches += 1
             
-            # Print batch statistics
             if n_batches % 10 == 0:
                 print(f"\nBatch {n_batches}/{len(dataloader)}")
                 print(f"  Recon Loss: {recon_loss.item():.4f}")
                 print(f"  InfoNCE Loss: {infonce_loss.item():.4f}")
-                print(f"  Entropy Loss: {entropy_loss.item():.4f}")
+                print(f"  Diversity Loss: {diversity_loss.item():.4f}")
                 print(f"  Total Loss: {total_loss.item():.4f}")
                 print(f"  Action Entropy: {action_entropy.item():.4f}")
+                print(f"  Diversity Weight: {diversity_weight.item():.4f}")
                 print(f"  Overall Accuracy: {accuracy.item():.4f}")
                 print(f"  White Pixel Accuracy: {white_accuracy.item():.4f}")
                 print(f"  Black Pixel Accuracy: {black_accuracy.item():.4f}")
                 print(f"  Action Distribution: {torch.bincount(indices, minlength=4)}")
                 print(f"  Unique Actions: {len(torch.unique(indices))}")
+                print(f"  Action History: {model.action_history}")
                 print(f"  Frame Similarities:")
                 print(f"    Mean: {similarities.mean():.4f}")
                 print(f"    Max: {similarities.max():.4f}")
                 print(f"    Min: {similarities.min():.4f}")
-                
-                # Print frame difference statistics
-                with torch.no_grad():
-                    mean_diff = frame_diffs.abs().mean().item()
-                    print(f"  Mean Frame Difference: {mean_diff:.4f}")
+                print(f"  Mean Frame Difference: {frame_diffs.abs().mean().item():.4f}")
         
         # Print epoch statistics
         print(f"\nEpoch {epoch}")

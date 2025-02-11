@@ -5,23 +5,30 @@ from einops import rearrange
 from models.vq_vae import STTransformerEncoder
 
 class ActionVectorQuantizer(nn.Module):
-    def __init__(self, n_codes=4, code_dim=256):  # Reduced to 4 actions for Pong (up/down for each paddle)
+    def __init__(self, n_codes=4, code_dim=256, temperature=1.0):  # Added temperature
         super().__init__()
         self.embedding = nn.Embedding(n_codes, code_dim)
         self.embedding.weight.data.uniform_(-1./n_codes, 1./n_codes)
+        self.temperature = temperature
         
     def forward(self, z):
-        # Calculate distances
+        # Calculate distances with temperature scaling
         d = torch.sum(z ** 2, dim=-1, keepdim=True) + \
             torch.sum(self.embedding.weight ** 2, dim=-1) - \
             2 * torch.matmul(z, self.embedding.weight.t())
+        d = d / self.temperature  # Scale distances by temperature
             
-        # Get nearest neighbor
+        # Get nearest neighbor with Gumbel noise for exploration
+        if self.training:
+            # Add Gumbel noise during training for exploration
+            noise = -torch.log(-torch.log(torch.rand_like(d) + 1e-10) + 1e-10)
+            d = d + noise * 0.1  # Scale noise to not dominate early training
+        
         min_encoding_indices = torch.argmin(d, dim=-1)
         z_q = self.embedding(min_encoding_indices)
         
-        # Straight through estimator with gradient support
-        z_q = z + (z_q.detach() - z.detach())  # Modified to preserve gradients
+        # Modified straight-through estimator with stronger gradients
+        z_q = z + (z_q - z).detach()  # Allow gradients through z
         
         return z_q, min_encoding_indices
 
@@ -71,47 +78,75 @@ class LAMDecoder(nn.Module):
             return binary_output
 
 class LAM(nn.Module):
-    def __init__(self, dim=256, n_heads=4, n_layers=4):  # Keep same transformer params
+    def __init__(self, dim=256, n_heads=4, n_layers=4):
         super().__init__()
         self.encoder = STTransformerEncoder(dim, n_heads, n_layers)
         self.action_proj = nn.Linear(dim, dim)
-        self.quantizer = ActionVectorQuantizer(n_codes=4, code_dim=dim)  # Reduced to 4 actions
+        self.quantizer = ActionVectorQuantizer(n_codes=4, code_dim=dim, temperature=2.0)  # Higher temperature
         self.decoder = LAMDecoder(dim, n_heads, n_layers)
         
+        # Add action history tracking for diversity enforcement
+        register_buffer = getattr(self, 'register_buffer', None)
+        if register_buffer is not None:
+            self.register_buffer('action_history', torch.zeros(4))
+        else:
+            self.action_history = torch.zeros(4)
+        
+    def get_diversity_loss(self, indices):
+        """Calculate diversity loss with historical context"""
+        # Update action history with exponential moving average
+        current_dist = torch.bincount(indices, minlength=4).float()
+        current_dist = current_dist / (current_dist.sum() + 1e-10)
+        self.action_history = 0.99 * self.action_history + 0.01 * current_dist
+        
+        # Calculate entropy of current batch
+        action_probs = current_dist
+        action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
+        
+        # KL divergence from uniform
+        uniform_probs = torch.ones_like(action_probs) / 4.0
+        kl_div = F.kl_div(
+            torch.log(action_probs + 1e-10),
+            uniform_probs,
+            reduction='sum'
+        )
+        
+        # Historical imbalance penalty
+        historical_imbalance = torch.max(self.action_history) - torch.min(self.action_history)
+        
+        # Combined diversity loss
+        diversity_loss = (
+            2.0 * kl_div +                    # Stronger KL penalty
+            5.0 * (1.386 - action_entropy) +  # Very strong entropy maximization
+            3.0 * historical_imbalance        # Penalize historical imbalance
+        )
+        
+        return diversity_loss, action_entropy
+    
     def forward(self, frames, next_frames):
-        """
-        Args:
-            frames: [batch, time, height, width] Previous frames
-            next_frames: [batch, height, width] Next frame to predict
-        Returns:
-            reconstructed: Reconstructed next frame logits
-            actions: Quantized actions
-            indices: Action indices
-        """
-        # Ensure inputs are float and require gradients
         frames = frames.float().requires_grad_(True)
         next_frames = next_frames.float().requires_grad_(True)
         
-        # Encode all frames
         b, t, h, w = frames.shape
         all_frames = torch.cat([frames, next_frames.unsqueeze(1)], dim=1)
-        features = self.encoder(all_frames)  # [b*(t+1), n, d]
+        features = self.encoder(all_frames)
+        features = features.reshape(b, t+1, -1, features.size(-1))
         
-        # Reshape features back to include frame dimension
-        features = features.reshape(b, t+1, -1, features.size(-1))  # [b, t+1, n, d]
-        
-        # Project to action space (average over patches)
-        actions_continuous = self.action_proj(features[:, :-1].mean(dim=2))  # [b, t, d]
-        
-        # Quantize actions
+        actions_continuous = self.action_proj(features[:, :-1].mean(dim=2))
         actions_quantized, indices = self.quantizer(actions_continuous.reshape(-1, actions_continuous.size(-1)))
         actions_quantized = actions_quantized.reshape(b, t, -1)
         
-        # Decode for training (use last frame's actions)
+        # Get diversity loss before reconstruction
+        diversity_loss, action_entropy = self.get_diversity_loss(indices)
+        
         reconstructed = self.decoder(
-            features[:, -2:-1],  # Use only the last frame's features [b, 1, n, d]
-            actions_quantized[:, -1]  # Use only the last frame's actions [b, d]
+            features[:, -2:-1],
+            actions_quantized[:, -1]
         )
+        
+        # Store diversity metrics for logging
+        self.current_entropy = action_entropy
+        self.current_diversity_loss = diversity_loss
         
         return reconstructed, actions_quantized, indices
     
