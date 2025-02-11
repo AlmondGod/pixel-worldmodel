@@ -358,8 +358,8 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             
             # Dynamic loss weighting based on action entropy
             # If entropy is very low, increase diversity weight
-            entropy_factor = torch.exp(-2.0 * action_entropy)
-            diversity_weight = 2.0 * entropy_factor  # Base weight is 2.0, increases when entropy is low
+            entropy_factor = torch.exp(-4.0 * action_entropy)  # Increased from -2.0
+            diversity_weight = 10.0 * entropy_factor  # Increased base weight from 2.0
             
             # Combine losses with dynamic weights
             total_loss = (

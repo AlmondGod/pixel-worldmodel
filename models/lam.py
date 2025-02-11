@@ -116,9 +116,9 @@ class LAM(nn.Module):
         
         # Combined diversity loss
         diversity_loss = (
-            2.0 * kl_div +                    # Stronger KL penalty
-            5.0 * (1.386 - action_entropy) +  # Very strong entropy maximization
-            3.0 * historical_imbalance        # Penalize historical imbalance
+            10.0 * kl_div +                    # Increased from 2.0
+            20.0 * (1.386 - action_entropy) +  # Increased from 5.0
+            15.0 * historical_imbalance        # Increased from 3.0
         )
         
         return diversity_loss, action_entropy
