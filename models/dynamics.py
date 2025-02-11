@@ -11,7 +11,7 @@ class MaskGITDynamics(nn.Module):
         n_layers=4,     # Reduced: simpler dynamics need fewer layers
         n_heads=4,      # Keep 4 heads for multi-scale attention
         max_seq_len=256,  # Keep 256 (16x16 patches)
-        n_actions=8     # Keep 8 actions (Pong needs few actions)
+        n_actions=4     # Reduced to 4 actions (up/down for each paddle)
     ):
         super().__init__()
         

@@ -5,3 +5,4 @@ test_data.h5
 training_data_hdf5.h5
 *.pyc
 test_results*/*
+debug_frame*

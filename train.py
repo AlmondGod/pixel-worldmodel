@@ -353,12 +353,12 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             infonce_loss = -torch.log(pos_term / (pos_term + neg_term)).mean()
             
             # Calculate action distribution and entropy
-            action_probs = torch.bincount(indices, minlength=8).float()
+            action_probs = torch.bincount(indices, minlength=4).float()
             action_probs = action_probs / action_probs.sum()
             action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
             
             # Target uniform distribution
-            uniform_probs = torch.ones_like(action_probs) / 8.0
+            uniform_probs = torch.ones_like(action_probs) / 4.0
             
             # KL divergence from uniform distribution (stronger regularization)
             kl_div = F.kl_div(
@@ -368,7 +368,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             )
             
             # Additional diversity constraints
-            action_counts = torch.bincount(indices, minlength=8)
+            action_counts = torch.bincount(indices, minlength=4)
             min_count = action_counts.min()
             max_count = action_counts.max()
             count_ratio = max_count.float() / (min_count.float() + 1e-6)
@@ -376,7 +376,7 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             
             # Entropy maximization with stronger weight when entropy is low
             entropy_factor = torch.exp(-2.0 * action_entropy)  # Increases weight when entropy is low
-            entropy_loss = entropy_factor * (2.079 - action_entropy)  # 2.079 is log(8), max possible entropy
+            entropy_loss = entropy_factor * (1.386 - action_entropy)  # 1.386 is log(4), max possible entropy
             
             # Combine all diversity-promoting losses with higher weights
             diversity_loss = (
