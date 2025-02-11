@@ -233,9 +233,28 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             neg_similarities = (exp_similarities * neg_mask).sum(1)  # [B]
             infonce_loss = -torch.log(pos_similarities / (pos_similarities + neg_similarities + 1e-10)).mean()
             
-            # Combined loss
-            total_loss = loss + action_diversity_loss + pred_diversity_loss + infonce_loss
-            total_loss.backward()
+            # Dynamic loss weighting based on action entropy
+            # If entropy is very low, increase diversity weight
+            entropy_factor = torch.exp(-8.0 * action_entropy)  # Much steeper exponential
+            diversity_weight = 100.0 * entropy_factor  # 10x larger base weight
+            
+            # If entropy is critically low, make diversity loss completely dominate
+            if action_entropy < 0.2:  # About 15% of maximum entropy
+                diversity_weight = diversity_weight * 10.0
+            
+            # Combine losses with dynamic weights
+            total_loss = (
+                0.1 * loss +           # Reduce reconstruction weight
+                0.5 * infonce_loss +         # Reduce InfoNCE weight
+                diversity_weight * action_diversity_loss  # Let diversity dominate
+            )
+            
+            # Add gradient penalty to prevent collapse
+            if total_loss < 0.1:
+                total_loss = total_loss + 0.1 * torch.sum(torch.abs(torch.sigmoid(logits)))
+            
+            loss = total_loss
+            loss.backward()
             
             # Calculate accuracy
             with torch.no_grad():
@@ -252,7 +271,7 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             
             optimizer.step()
             
-            total_loss += total_loss.item()
+            total_loss += loss.item()
             total_mask_ratio += mask_ratio
             n_batches += 1
             
@@ -358,14 +377,18 @@ def train_lam(model, dataloader, optimizer, save_dir, epochs=EPOCHS, device="cud
             
             # Dynamic loss weighting based on action entropy
             # If entropy is very low, increase diversity weight
-            entropy_factor = torch.exp(-4.0 * action_entropy)  # Increased from -2.0
-            diversity_weight = 10.0 * entropy_factor  # Increased base weight from 2.0
+            entropy_factor = torch.exp(-8.0 * action_entropy)  # Much steeper exponential
+            diversity_weight = 100.0 * entropy_factor  # 10x larger base weight
+            
+            # If entropy is critically low, make diversity loss completely dominate
+            if action_entropy < 0.2:  # About 15% of maximum entropy
+                diversity_weight = diversity_weight * 10.0
             
             # Combine losses with dynamic weights
             total_loss = (
-                1.0 * recon_loss +           # Keep reconstruction weight constant
-                1.0 * infonce_loss +         # Increased InfoNCE weight
-                diversity_weight * diversity_loss  # Dynamic diversity weight
+                0.1 * recon_loss +           # Reduce reconstruction weight
+                0.5 * infonce_loss +         # Reduce InfoNCE weight
+                diversity_weight * diversity_loss  # Let diversity dominate
             )
             
             # Add gradient penalty to prevent collapse

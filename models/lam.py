@@ -5,30 +5,45 @@ from einops import rearrange
 from models.vq_vae import STTransformerEncoder
 
 class ActionVectorQuantizer(nn.Module):
-    def __init__(self, n_codes=4, code_dim=256, temperature=1.0):  # Added temperature
+    def __init__(self, n_codes=4, code_dim=256, temperature=1.0):
         super().__init__()
         self.embedding = nn.Embedding(n_codes, code_dim)
         self.embedding.weight.data.uniform_(-1./n_codes, 1./n_codes)
         self.temperature = temperature
+        self.training_steps = 0
+        self.warmup_steps = 1000  # Force uniform sampling for first 1000 steps
         
     def forward(self, z):
+        self.training_steps += 1
+        
+        # Force uniform sampling during warmup
+        if self.training and self.training_steps < self.warmup_steps:
+            batch_size = z.size(0)
+            # Randomly sample actions uniformly
+            uniform_indices = torch.randint(0, 4, (batch_size,), device=z.device)
+            z_q = self.embedding(uniform_indices)
+            # Use straight-through gradient
+            z_q = z + (z_q - z).detach()
+            return z_q, uniform_indices
+            
         # Calculate distances with temperature scaling
         d = torch.sum(z ** 2, dim=-1, keepdim=True) + \
             torch.sum(self.embedding.weight ** 2, dim=-1) - \
             2 * torch.matmul(z, self.embedding.weight.t())
-        d = d / self.temperature  # Scale distances by temperature
-            
-        # Get nearest neighbor with Gumbel noise for exploration
+        d = d / self.temperature
+        
+        # Get nearest neighbor with aggressive Gumbel noise for exploration
         if self.training:
-            # Add Gumbel noise during training for exploration
             noise = -torch.log(-torch.log(torch.rand_like(d) + 1e-10) + 1e-10)
-            d = d + noise * 0.1  # Scale noise to not dominate early training
+            # Increase noise magnitude when entropy is low
+            noise_scale = 1.0 if self.training_steps < self.warmup_steps * 2 else 0.5
+            d = d + noise * noise_scale
         
         min_encoding_indices = torch.argmin(d, dim=-1)
         z_q = self.embedding(min_encoding_indices)
         
         # Modified straight-through estimator with stronger gradients
-        z_q = z + (z_q - z).detach()  # Allow gradients through z
+        z_q = z + (z_q - z).detach()
         
         return z_q, min_encoding_indices
 
@@ -111,14 +126,18 @@ class LAM(nn.Module):
             reduction='sum'
         )
         
-        # Historical imbalance penalty
+        # Historical imbalance penalty with exponential scaling
         historical_imbalance = torch.max(self.action_history) - torch.min(self.action_history)
+        historical_penalty = torch.exp(5.0 * historical_imbalance)  # Exponential scaling
         
-        # Combined diversity loss
+        # Entropy penalty with exponential scaling
+        entropy_penalty = torch.exp(10.0 * (1.386 - action_entropy))
+        
+        # Combined diversity loss with extreme scaling
         diversity_loss = (
-            10.0 * kl_div +                    # Increased from 2.0
-            20.0 * (1.386 - action_entropy) +  # Increased from 5.0
-            15.0 * historical_imbalance        # Increased from 3.0
+            50.0 * kl_div +                # Massive KL penalty
+            entropy_penalty +               # Exponentially scaled entropy penalty
+            20.0 * historical_penalty      # Exponentially scaled historical penalty
         )
         
         return diversity_loss, action_entropy
