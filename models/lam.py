@@ -11,38 +11,72 @@ class ActionVectorQuantizer(nn.Module):
         self.embedding.weight.data.uniform_(-1./n_codes, 1./n_codes)
         self.temperature = temperature
         self.training_steps = 0
-        self.warmup_steps = 1000  # Force uniform sampling for first 1000 steps
+        self.warmup_steps = 2000  # Increased warmup period
+        self.force_uniform_prob = 1.0  # Start with 100% forced uniform
         
     def forward(self, z):
         self.training_steps += 1
+        batch_size = z.size(0)
         
-        # Force uniform sampling during warmup
-        if self.training and self.training_steps < self.warmup_steps:
-            batch_size = z.size(0)
-            # Randomly sample actions uniformly
-            uniform_indices = torch.randint(0, 4, (batch_size,), device=z.device)
-            z_q = self.embedding(uniform_indices)
-            # Use straight-through gradient
-            z_q = z + (z_q - z).detach()
-            return z_q, uniform_indices
+        # Calculate probability of forcing uniform sampling
+        if self.training:
+            # Linearly decrease force_uniform_prob from 1.0 to 0.2 over warmup period
+            self.force_uniform_prob = max(0.2, 1.0 - (self.training_steps / self.warmup_steps))
             
-        # Calculate distances with temperature scaling
+            # Force uniform sampling with current probability
+            if torch.rand(1).item() < self.force_uniform_prob:
+                # Ensure perfectly uniform distribution
+                repeats = batch_size // 4 * 4
+                remainder = batch_size % 4
+                uniform_indices = torch.repeat_interleave(torch.arange(4), repeats//4)
+                if remainder > 0:
+                    uniform_indices = torch.cat([uniform_indices, torch.randint(0, 4, (remainder,))])
+                uniform_indices = uniform_indices[torch.randperm(batch_size)]
+                uniform_indices = uniform_indices.to(z.device)
+                z_q = self.embedding(uniform_indices)
+                # Use straight-through gradient
+                z_q = z + (z_q - z).detach()
+                return z_q, uniform_indices
+        
+        # Calculate distances
         d = torch.sum(z ** 2, dim=-1, keepdim=True) + \
             torch.sum(self.embedding.weight ** 2, dim=-1) - \
             2 * torch.matmul(z, self.embedding.weight.t())
-        d = d / self.temperature
         
-        # Get nearest neighbor with aggressive Gumbel noise for exploration
+        # Add strong Gumbel noise during training
         if self.training:
             noise = -torch.log(-torch.log(torch.rand_like(d) + 1e-10) + 1e-10)
-            # Increase noise magnitude when entropy is low
-            noise_scale = 1.0 if self.training_steps < self.warmup_steps * 2 else 0.5
-            d = d + noise * noise_scale
+            noise_scale = 2.0  # Increased noise for more exploration
+            d = d / self.temperature + noise * noise_scale
         
+        # Get nearest neighbor
         min_encoding_indices = torch.argmin(d, dim=-1)
+        
+        # Apply hard constraints during training
+        if self.training:
+            # Count actions in batch
+            action_counts = torch.bincount(min_encoding_indices, minlength=4)
+            max_count = batch_size // 2  # No action can take more than 50% of batch
+            
+            # If any action exceeds max_count, randomly reassign excess to underused actions
+            for action in range(4):
+                if action_counts[action] > max_count:
+                    excess_mask = (min_encoding_indices == action)
+                    excess_indices = torch.where(excess_mask)[0]
+                    n_excess = action_counts[action] - max_count
+                    
+                    # Find underused actions
+                    underused = torch.where(action_counts < max_count)[0]
+                    if len(underused) > 0:
+                        # Randomly select indices to reassign
+                        to_reassign = excess_indices[torch.randperm(len(excess_indices))[:n_excess]]
+                        # Assign to random underused actions
+                        new_actions = underused[torch.randint(0, len(underused), (n_excess,))]
+                        min_encoding_indices[to_reassign] = new_actions
+        
         z_q = self.embedding(min_encoding_indices)
         
-        # Modified straight-through estimator with stronger gradients
+        # Straight-through estimator
         z_q = z + (z_q - z).detach()
         
         return z_q, min_encoding_indices
@@ -118,7 +152,7 @@ class LAM(nn.Module):
         action_probs = current_dist
         action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
         
-        # KL divergence from uniform
+        # KL divergence from uniform with extreme scaling
         uniform_probs = torch.ones_like(action_probs) / 4.0
         kl_div = F.kl_div(
             torch.log(action_probs + 1e-10),
@@ -126,18 +160,24 @@ class LAM(nn.Module):
             reduction='sum'
         )
         
-        # Historical imbalance penalty with exponential scaling
+        # Historical imbalance penalty with super-exponential scaling
         historical_imbalance = torch.max(self.action_history) - torch.min(self.action_history)
-        historical_penalty = torch.exp(5.0 * historical_imbalance)  # Exponential scaling
+        historical_penalty = torch.exp(10.0 * historical_imbalance)  # More aggressive exponential
         
-        # Entropy penalty with exponential scaling
-        entropy_penalty = torch.exp(10.0 * (1.386 - action_entropy))
+        # Entropy penalty with super-exponential scaling
+        target_entropy = torch.log(torch.tensor(4.0))  # Maximum entropy for 4 actions
+        entropy_gap = torch.max(target_entropy - action_entropy, torch.tensor(0.0))
+        entropy_penalty = torch.exp(20.0 * entropy_gap)  # Much more aggressive
+        
+        # Add minimum entropy constraint
+        if action_entropy < 1.0:  # If entropy drops below ~75% of maximum
+            entropy_penalty = entropy_penalty * 100.0  # Massive penalty boost
         
         # Combined diversity loss with extreme scaling
         diversity_loss = (
-            50.0 * kl_div +                # Massive KL penalty
-            entropy_penalty +               # Exponentially scaled entropy penalty
-            20.0 * historical_penalty      # Exponentially scaled historical penalty
+            100.0 * kl_div +                # 2x larger KL penalty
+            entropy_penalty +                # Super-exponential entropy penalty
+            50.0 * historical_penalty        # 2.5x larger historical penalty
         )
         
         return diversity_loss, action_entropy
