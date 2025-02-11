@@ -219,11 +219,20 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             pred_entropy = -(pred_probs * torch.log(pred_probs + 1e-10)).sum()
             pred_diversity_loss = -0.5 * pred_entropy
             
+            # Calculate frame differences for similarity computation
+            last_prev_frames = prev_frames[:, -1]  # [B, H, W]
+            next_frames_last = next_frames[:, -1]  # [B, H, W]
+            frame_diffs = next_frames_last.float() - last_prev_frames.float()
+            frame_diffs = frame_diffs.reshape(batch.size(0), -1)
+            frame_diffs = F.normalize(frame_diffs, dim=1, p=2)  # L2 normalize
+            
             # Calculate similarity matrix between all pairs of transitions
-            similarities = torch.matmul(actions.unsqueeze(1), actions.unsqueeze(0))  # [B, B]
+            similarities = torch.matmul(frame_diffs, frame_diffs.t())  # [B, B]
             
             # Get positive and negative masks for InfoNCE
-            pos_mask = (actions.unsqueeze(0) == actions.unsqueeze(1)).float()  # [B, B]
+            # Convert actions to one-hot first
+            actions_one_hot = F.one_hot(actions, num_classes=8).float()  # [B, 8]
+            pos_mask = torch.matmul(actions_one_hot, actions_one_hot.t())  # [B, B]
             neg_mask = 1 - pos_mask
             
             # InfoNCE loss (with temperature scaling)
