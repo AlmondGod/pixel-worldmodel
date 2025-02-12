@@ -167,6 +167,8 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             print(f"  Selected token shape: {next_tokens.shape}")
             
             # Convert to VQVAE patch tokens (256 patches for 16x16 grid)
+            # Ensure token indices are within valid range
+            next_tokens = next_tokens.clamp(0, vqvae.quantizer.n_codes - 1)  # Clamp to valid range
             next_tokens = next_tokens.unsqueeze(-1).repeat(1, 256)  # [B, 256]
             print(f"  Expanded tokens shape: {next_tokens.shape}")
             
@@ -175,24 +177,26 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             print(f"  Embedded tokens shape: {z_q.shape}")
             
             # Reshape for decoder - keep it in the format [batch*patches, code_dim]
-            # No need to reshape to spatial dimensions since decoder expects flattened patches
             z_q = z_q.reshape(-1, z_q.size(-1))  # [B*256, code_dim]
             print(f"  Reshaped z_q shape: {z_q.shape}")
             
             # Decode to get predicted frame
-            predicted_frame = vqvae.decoder(z_q)  # Should output [B*256, patch_size*patch_size]
-            print(f"  Raw decoder output shape: {predicted_frame.shape}")
+            logits = vqvae.decoder(z_q)  # Get logits first
+            print(f"  Raw decoder output shape: {logits.shape}")
             
-            # Reshape to image dimensions and apply sigmoid for binary output
-            predicted_frame = predicted_frame.reshape(B, 16, 16, 16)  # [B, H/4, W/4, 16]
-            predicted_frame = predicted_frame.reshape(B, 16, 16, 4, 4)  # [B, H/4, W/4, p, p]
-            predicted_frame = predicted_frame.permute(0, 1, 3, 2, 4)  # [B, H/4, p, W/4, p]
-            predicted_frame = predicted_frame.reshape(B, 64, 64)  # [B, H, W]
+            # Reshape logits and apply sigmoid + threshold
+            logits = logits.reshape(B, 16, 16, 16)  # [B, H/4, W/4, 16]
+            logits = logits.reshape(B, 16, 16, 4, 4)  # [B, H/4, W/4, p, p]
+            logits = logits.permute(0, 1, 3, 2, 4)  # [B, H/4, p, W/4, p]
+            logits = logits.reshape(B, 64, 64)  # [B, H, W]
+            
+            # Apply sigmoid and threshold with a small margin for numerical stability
+            predicted_frame = torch.sigmoid(logits)
+            predicted_frame = (predicted_frame > 0.5).float()  # Convert to binary (0 or 1)
             predicted_frame = predicted_frame.unsqueeze(1)  # [B, 1, H, W]
-            predicted_frame = (torch.sigmoid(predicted_frame) > 0.5).float()
             print(f"  Final predicted frame shape: {predicted_frame.shape}")
             
-            # Verify binary output
+            # Double-check binary output
             assert torch.all(torch.logical_or(predicted_frame == 0, predicted_frame == 1)), "Predicted frame must be binary"
             
             # Convert to numpy for metrics
