@@ -189,6 +189,11 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 next_frame = batch[:, 1:2]  # [B, 1, H, W] - second frame
                 actions = lam.infer_actions(prev_frame, next_frame)  # [B] - one action per sequence
                 
+                # Reshape tokens to [B, T, N] where N is number of patches
+                B = batch.size(0)
+                T = batch.size(1)
+                tokens = tokens.reshape(B, T, -1)  # [B, T, N]
+                
                 # Debug prints for shapes
                 if n_batches % 10 == 0:
                     print("\nLAM Action Debug:")
