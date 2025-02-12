@@ -187,6 +187,13 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 next_frames = batch[:, 1:]   # [B, T-1, H, W]
                 actions = lam.infer_actions(prev_frames, next_frames)
                 
+                # Debug prints for action distribution
+                if n_batches % 10 == 0:
+                    print("\nLAM Action Debug:")
+                    print(f"  Action shape: {actions.shape}")
+                    print(f"  Action values: {actions.unique().tolist()}")
+                    print(f"  Action distribution: {torch.bincount(actions, minlength=4)}")
+                
                 # Reshape actions to match batch size
                 actions = actions.reshape(batch.size(0), -1)  # [B, (T-1)]
                 actions = actions[:, 0]  # Take first action for each sequence [B]
@@ -209,10 +216,10 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             loss = F.cross_entropy(pred_tokens, target_tokens)
             
             # Add action diversity loss
-            action_probs = torch.bincount(actions, minlength=8).float()
+            action_probs = torch.bincount(actions, minlength=4).float()  # Changed from 8 to 4
             action_probs = action_probs / action_probs.sum()
             action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
-            action_diversity_loss = -2.0 * (action_entropy - torch.log(torch.tensor(8.0)).to(device))
+            action_diversity_loss = -2.0 * (action_entropy - torch.log(torch.tensor(4.0)).to(device))  # Changed from 8.0 to 4.0
             
             # Add prediction diversity loss to encourage balanced token usage
             pred_probs = torch.softmax(pred_tokens, dim=-1).mean(dim=0)
@@ -231,7 +238,7 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             
             # Get positive and negative masks for InfoNCE
             # Convert actions to one-hot first
-            actions_one_hot = F.one_hot(actions, num_classes=8).float()  # [B, 8]
+            actions_one_hot = F.one_hot(actions, num_classes=4).float()  # Changed from 8 to 4
             pos_mask = torch.matmul(actions_one_hot, actions_one_hot.t())  # [B, B]
             neg_mask = 1 - pos_mask
             
@@ -297,7 +304,7 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 print(f"  Mask Ratio: {mask_ratio:.2f}")
                 print(f"  Unique Target Tokens: {n_unique_targets}")
                 print(f"  Unique Predicted Tokens: {n_unique_preds}")
-                print(f"  Action Distribution: {torch.bincount(actions, minlength=8)}")
+                print(f"  Action Distribution: {torch.bincount(actions, minlength=4)}")
         
         print(f"\nEpoch {epoch}")
         print(f"  Average Loss: {total_loss/n_batches:.4f}")
