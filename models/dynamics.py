@@ -15,7 +15,7 @@ class MaskGITDynamics(nn.Module):
     ):
         super().__init__()
         
-        self.token_embedding = nn.Linear(256, dim)  # Project from VQVAE token dimension to model dimension
+        self.token_embedding = nn.Embedding(n_codes, dim)  # Changed back to embedding
         self.action_embedding = nn.Embedding(n_actions, dim)
         self.position_embedding = nn.Parameter(torch.randn(1, max_seq_len, dim))
         
@@ -32,11 +32,11 @@ class MaskGITDynamics(nn.Module):
         self.output = nn.Linear(dim, n_codes)
         
     def forward(self, tokens, actions):
-        # tokens: [batch, seq_len, n_patches] - token indices
+        # tokens: [batch, seq_len] - token indices
         # actions: [batch] action indices
         
-        # Project tokens to model dimension
-        x = self.token_embedding(tokens)  # [batch, seq_len, dim]
+        # Embed tokens
+        x = self.token_embedding(tokens.long())  # [batch, seq_len, dim]
         
         # Add positional embedding
         x = x + self.position_embedding[:, :x.size(1)]
