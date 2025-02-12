@@ -223,5 +223,26 @@ class LAM(nn.Module):
             features = self.encoder(all_frames)
             features = features.reshape(frames.size(0), -1, features.size(1), features.size(2))
             actions_continuous = self.action_proj(features[:, :-1].mean(dim=2))
-            _, indices = self.quantizer(actions_continuous.reshape(-1, actions_continuous.size(-1)))
+            
+            # Add temperature and noise during inference to encourage diversity
+            z = actions_continuous.reshape(-1, actions_continuous.size(-1))
+            d = torch.sum(z ** 2, dim=-1, keepdim=True) + \
+                torch.sum(self.quantizer.embedding.weight ** 2, dim=-1) - \
+                2 * torch.matmul(z, self.quantizer.embedding.weight.t())
+            
+            # Add Gumbel noise and temperature scaling
+            noise = -torch.log(-torch.log(torch.rand_like(d) + 1e-10) + 1e-10)
+            temperature = 2.0  # Higher temperature for more diversity
+            d = d / temperature + noise
+            
+            # Get action indices
+            indices = torch.argmin(d, dim=-1)
+            
+            # Force diversity if all actions are the same
+            if len(torch.unique(indices)) == 1:
+                # Randomly assign some actions to be different
+                rand_mask = torch.rand_like(indices.float()) < 0.5
+                rand_actions = torch.randint_like(indices, 0, 4)
+                indices = torch.where(rand_mask, rand_actions, indices)
+        
         return indices 
