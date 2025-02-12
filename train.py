@@ -187,19 +187,32 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 next_frames = batch[:, 1:]   # [B, T-1, H, W]
                 actions = lam.infer_actions(prev_frames, next_frames)
                 
-                # Debug prints for action distribution
+                # Debug prints for action distribution before any reshaping
                 if n_batches % 10 == 0:
-                    print("\nLAM Action Debug:")
+                    print("\nLAM Action Debug (Before Reshape):")
                     print(f"  Action shape: {actions.shape}")
                     print(f"  Action values: {actions.unique().tolist()}")
                     print(f"  Action distribution: {torch.bincount(actions, minlength=4)}")
                 
-                # Reshape actions to match batch size
-                actions = actions.reshape(batch.size(0), -1)  # [B, (T-1)]
-                actions = actions[:, 0]  # Take first action for each sequence [B]
+                # Reshape actions while preserving all actions (not just first one)
+                B = batch.size(0)  # Batch size
+                T = prev_frames.size(1)  # Sequence length
+                actions = actions.reshape(B * T)  # Flatten all actions
                 
-                # Ensure tokens and actions have same batch dimension
-                tokens = tokens[:actions.size(0)]
+                # Debug prints after reshaping
+                if n_batches % 10 == 0:
+                    print("\nLAM Action Debug (After Reshape):")
+                    print(f"  Action shape: {actions.shape}")
+                    print(f"  Action values: {actions.unique().tolist()}")
+                    print(f"  Action distribution: {torch.bincount(actions, minlength=4)}")
+                
+                # Ensure tokens match the action dimensions
+                tokens = tokens.repeat_interleave(T, dim=0)
+                
+                # Verify shapes match
+                if n_batches % 10 == 0:
+                    print(f"  Token shape: {tokens.shape}")
+                    print(f"  Actions shape: {actions.shape}")
             
             # Create random masks with higher masking rate for binary data
             mask_ratio = torch.rand(1).item() * 0.3 + 0.7  # 70-100% masking rate
