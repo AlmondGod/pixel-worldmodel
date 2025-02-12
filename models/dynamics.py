@@ -10,12 +10,12 @@ class MaskGITDynamics(nn.Module):
         dim=256,        # Keep transformer dim for good feature learning
         n_layers=4,     # Reduced: simpler dynamics need fewer layers
         n_heads=4,      # Keep 4 heads for multi-scale attention
-        max_seq_len=256,  # Keep 256 (16x16 patches)
+        max_seq_len=16,  # Changed to match sequence length
         n_actions=4     # Reduced to 4 actions (up/down for each paddle)
     ):
         super().__init__()
         
-        self.token_embedding = nn.Embedding(n_codes, dim)  # Embed from smaller codebook
+        self.token_embedding = nn.Linear(256, dim)  # Project from VQVAE token dimension to model dimension
         self.action_embedding = nn.Embedding(n_actions, dim)
         self.position_embedding = nn.Parameter(torch.randn(1, max_seq_len, dim))
         
@@ -32,10 +32,10 @@ class MaskGITDynamics(nn.Module):
         self.output = nn.Linear(dim, n_codes)
         
     def forward(self, tokens, actions):
-        # tokens: [batch, seq_len] - token indices
+        # tokens: [batch, seq_len, n_patches] - token indices
         # actions: [batch] action indices
         
-        # Embed tokens
+        # Project tokens to model dimension
         x = self.token_embedding(tokens)  # [batch, seq_len, dim]
         
         # Add positional embedding
@@ -43,14 +43,12 @@ class MaskGITDynamics(nn.Module):
         
         # Add action embeddings
         action_emb = self.action_embedding(actions)  # [batch, dim]
-        
-        # Broadcast action embedding across sequence dimension
         x = x + action_emb.unsqueeze(1)  # [batch, seq_len, dim]
         
         # Apply transformer
         features = self.transformer(x)
         
         # Get logits
-        logits = self.output(features)
+        logits = self.output(features)  # [batch, seq_len, n_codes]
         
         return logits 
