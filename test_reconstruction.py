@@ -174,17 +174,21 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             z_q = vqvae.quantizer.embedding(next_tokens)  # [B, 256, code_dim]
             print(f"  Embedded tokens shape: {z_q.shape}")
             
-            # Reshape for decoder
-            z_q = z_q.reshape(B, 16, 16, -1)  # [B, 16, 16, code_dim]
-            z_q = z_q.permute(0, 3, 1, 2)  # [B, code_dim, 16, 16]
+            # Reshape for decoder - keep it in the format [batch*patches, code_dim]
+            # No need to reshape to spatial dimensions since decoder expects flattened patches
+            z_q = z_q.reshape(-1, z_q.size(-1))  # [B*256, code_dim]
             print(f"  Reshaped z_q shape: {z_q.shape}")
             
             # Decode to get predicted frame
-            predicted_frame = vqvae.decoder(z_q)  # Should output [B, 4096]
+            predicted_frame = vqvae.decoder(z_q)  # Should output [B*256, patch_size*patch_size]
             print(f"  Raw decoder output shape: {predicted_frame.shape}")
             
             # Reshape to image dimensions and apply sigmoid for binary output
-            predicted_frame = predicted_frame.reshape(B, 1, 64, 64)
+            predicted_frame = predicted_frame.reshape(B, 16, 16, 16)  # [B, H/4, W/4, 16]
+            predicted_frame = predicted_frame.reshape(B, 16, 16, 4, 4)  # [B, H/4, W/4, p, p]
+            predicted_frame = predicted_frame.permute(0, 1, 3, 2, 4)  # [B, H/4, p, W/4, p]
+            predicted_frame = predicted_frame.reshape(B, 64, 64)  # [B, H, W]
+            predicted_frame = predicted_frame.unsqueeze(1)  # [B, 1, H, W]
             predicted_frame = (torch.sigmoid(predicted_frame) > 0.5).float()
             print(f"  Final predicted frame shape: {predicted_frame.shape}")
             
