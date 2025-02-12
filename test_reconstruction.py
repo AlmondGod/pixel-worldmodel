@@ -156,11 +156,16 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             next_tokens = torch.argmax(logits[:, 0], dim=-1)  # Only take first position's prediction
             
             # Reshape next_tokens to match VQVAE's expected input shape
-            next_tokens = next_tokens.reshape(B, -1)  # [B, N]
+            next_tokens = next_tokens.reshape(B, -1)  # [B, 256] where 256 is the number of patches (16x16)
             
-            # Decode predicted tokens through VQVAE
-            z_q = vqvae.quantizer.embedding(next_tokens)  # [B, N, code_dim]
-            z_q = z_q.reshape(B, 16, 16, -1)  # Reshape to spatial dimensions [B, H/4, W/4, code_dim]
+            # Get embeddings from the quantizer
+            z_q = vqvae.quantizer.embedding(next_tokens)  # [B, 256, code_dim]
+            
+            # Reshape to match spatial dimensions expected by decoder
+            z_q = z_q.permute(0, 2, 1)  # [B, code_dim, 256]
+            z_q = z_q.reshape(B, -1, 16, 16)  # [B, code_dim, 16, 16]
+            
+            # Decode to get predicted frame
             predicted_frame = vqvae.decoder(z_q)
             predicted_frame = predicted_frame.reshape(B, 1, 64, 64)  # Final image shape
             
