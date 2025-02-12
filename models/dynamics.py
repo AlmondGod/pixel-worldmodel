@@ -15,7 +15,7 @@ class MaskGITDynamics(nn.Module):
     ):
         super().__init__()
         
-        self.token_embedding = nn.Embedding(n_codes, dim)  # Changed back to embedding
+        self.token_embedding = nn.Embedding(256, dim)  # Changed back to embedding
         self.action_embedding = nn.Embedding(n_actions, dim)
         self.position_embedding = nn.Parameter(torch.randn(1, max_seq_len, dim))
         
