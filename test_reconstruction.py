@@ -175,16 +175,9 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             next_tokens = torch.argmax(logits, dim=-1)  # [B, seq_len]
             print(f"  Predicted tokens unique values: {torch.unique(next_tokens).tolist()}")
             
-            # Take only the first predicted token for each sequence
-            next_tokens = next_tokens[:, 0]  # [B]
-            print(f"  Selected tokens unique values: {torch.unique(next_tokens).tolist()}")
-            
-            # Convert to VQVAE patch tokens (256 patches for 16x16 grid)
-            # Ensure token indices are within valid range
-            next_tokens = next_tokens.clamp(0, 31)  # Clamp to valid range (32 codes)
-            next_tokens = next_tokens.unsqueeze(-1).repeat(1, 256)  # [B, 256]
-            print("\nDecoder input debug:")
-            print(f"  Expanded tokens unique values: {torch.unique(next_tokens).tolist()}")
+            # Take predictions for all patches (not just first position)
+            next_tokens = next_tokens.reshape(B, -1)  # [B, 256]
+            print(f"  Reshaped tokens unique values: {torch.unique(next_tokens).tolist()}")
             
             # Get embeddings from the quantizer
             z_q = vqvae.quantizer.embedding(next_tokens)  # [B, 256, code_dim]

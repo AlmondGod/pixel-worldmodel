@@ -10,16 +10,17 @@ class MaskGITDynamics(nn.Module):
         dim=256,        # Keep transformer dim for good feature learning
         n_layers=4,     # Reduced: simpler dynamics need fewer layers
         n_heads=4,      # Keep 4 heads for multi-scale attention
-        max_seq_len=16,  # Changed to match sequence length
+        max_seq_len=256,  # Changed to match number of patches (16x16)
         n_actions=4     # Reduced to 4 actions (up/down for each paddle)
     ):
         super().__init__()
         
-        # Project token features to model dimension
-        self.token_projection = nn.Linear(256, dim)  # Project 256-dim features to model dim
+        # Project token indices to model dimension
+        self.token_embedding = nn.Embedding(n_codes, dim)
         self.action_embedding = nn.Embedding(n_actions, dim)
         self.position_embedding = nn.Parameter(torch.randn(1, max_seq_len, dim))
         
+        # Transformer layers
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=dim,
@@ -30,32 +31,25 @@ class MaskGITDynamics(nn.Module):
             num_layers=n_layers
         )
         
+        # Output projection to logits over codebook
         self.output = nn.Linear(dim, n_codes)
         
     def forward(self, tokens, actions):
-        # tokens: [batch, seq_len, 256] - token features from VQVAE
+        # tokens: [batch, 256] - token indices for each patch
         # actions: [batch] action indices
         
-        # Project token features to model dimension
-        x = self.token_projection(tokens.float())  # [batch, seq_len, dim]
+        # Embed tokens and add positional encoding
+        x = self.token_embedding(tokens)  # [batch, 256, dim]
+        x = x + self.position_embedding[:, :x.size(1)]
         
-        # Add positional embedding, handling variable sequence lengths
-        seq_len = x.size(1)
-        if seq_len > self.position_embedding.size(1):
-            # If sequence is too long, truncate
-            x = x[:, :self.position_embedding.size(1)]
-        else:
-            # If sequence is shorter, use only needed positions
-            x = x + self.position_embedding[:, :seq_len]
-        
-        # Add action embeddings
+        # Add action embeddings to all positions
         action_emb = self.action_embedding(actions)  # [batch, dim]
-        x = x + action_emb.unsqueeze(1)  # [batch, seq_len, dim]
+        x = x + action_emb.unsqueeze(1)  # [batch, 256, dim]
         
         # Apply transformer
         features = self.transformer(x)
         
-        # Get logits
-        logits = self.output(features)  # [batch, seq_len, n_codes]
+        # Get logits for next token prediction
+        logits = self.output(features)  # [batch, 256, n_codes]
         
         return logits 
