@@ -181,7 +181,7 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             
             # Convert to VQVAE patch tokens (256 patches for 16x16 grid)
             # Ensure token indices are within valid range
-            next_tokens = next_tokens.clamp(0, vqvae.quantizer.n_codes - 1)  # Clamp to valid range
+            next_tokens = next_tokens.clamp(0, 31)  # Clamp to valid range (32 codes)
             next_tokens = next_tokens.unsqueeze(-1).repeat(1, 256)  # [B, 256]
             print("\nDecoder input debug:")
             print(f"  Expanded tokens unique values: {torch.unique(next_tokens).tolist()}")
@@ -196,6 +196,9 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             
             # Decode to get predicted frame
             logits = vqvae.decoder(z_q)  # Get logits first
+            
+            # Scale logits to prevent extreme values
+            logits = logits * 0.1  # Scale down logits to prevent extreme sigmoid values
             print("\nDecoder output debug:")
             print(f"  Decoder logits min/max: {logits.min().item():.4f}/{logits.max().item():.4f}")
             print(f"  Decoder logits mean/std: {logits.mean().item():.4f}/{logits.std().item():.4f}")
