@@ -145,8 +145,13 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             action = lam.infer_actions(initial_frame, actual_next_frame)
             action = action.reshape(-1)[0]  # Take first action
             
+            # Pad tokens to match expected sequence length
+            B, N = initial_tokens.shape
+            padded_tokens = torch.zeros(B, 16, N, device=initial_tokens.device)
+            padded_tokens[:, :initial_tokens.size(1)] = initial_tokens
+            
             # Predict next tokens
-            logits = dynamics(initial_tokens, action.unsqueeze(0))
+            logits = dynamics(padded_tokens, action.unsqueeze(0))
             next_tokens = torch.argmax(logits, dim=-1)
             
             # Decode predicted tokens
