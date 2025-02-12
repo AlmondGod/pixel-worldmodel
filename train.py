@@ -298,25 +298,35 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             n_white = (target_tokens == 1).float().sum()
             n_black = (target_tokens == 0).float().sum()
             pos_weight = (n_black / n_white).clamp(min=1.0, max=10.0)
-            class_weights = torch.ones(16, device=device)  # weights for each token class
+            
+            # Enhanced class weighting strategy
+            class_weights = torch.ones(16, device=device)
             class_weights[0] = 0.1  # reduce weight for black token
+            # Increase weights for tokens that tend to represent white pixels
+            white_token_indices = [1, 2, 3]  # Assuming these tokens often represent white pixels
+            class_weights[white_token_indices] = 2.0  # Increase weight for white-associated tokens
             
             # Calculate separate losses for black and white pixels
             pred_probs = torch.softmax(pred_tokens, dim=-1)
             white_mask = target_tokens == 1
             black_mask = target_tokens == 0
             
-            # Calculate losses separately
+            # Calculate losses separately with stronger weighting for white pixels
             white_loss = F.cross_entropy(pred_tokens[white_mask], target_tokens[white_mask]) if white_mask.any() else torch.tensor(0.0, device=device)
             black_loss = F.cross_entropy(pred_tokens[black_mask], target_tokens[black_mask]) if black_mask.any() else torch.tensor(0.0, device=device)
             
             # Total loss with class weights
-            loss = F.cross_entropy(pred_tokens, target_tokens, weight=class_weights)
+            ce_loss = F.cross_entropy(pred_tokens, target_tokens, weight=class_weights)
             
-            # Add prediction diversity loss to encourage balanced token usage (only on masked positions)
+            # Add prediction diversity loss to encourage balanced token usage
             pred_entropy = -(pred_probs * torch.log(pred_probs + 1e-10)).sum()
-            target_entropy = torch.log(torch.tensor(16.0, device=device))  # maximum possible entropy
+            target_entropy = torch.log(torch.tensor(16.0, device=device))
             pred_diversity_loss = -2.0 * (pred_entropy - target_entropy)
+            
+            # Add token balance loss to encourage using both black and white tokens
+            token_probs = pred_probs.mean(dim=0)  # Average probability for each token
+            token_entropy = -(token_probs * torch.log(token_probs + 1e-10)).sum()
+            token_balance_loss = -2.0 * (token_entropy - target_entropy)
             
             # Add action diversity loss
             action_probs = torch.bincount(actions, minlength=4).float()
@@ -331,16 +341,17 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             frame_diffs = frame_diffs.reshape(batch.size(0), -1)
             frame_diffs = F.normalize(frame_diffs, dim=1, p=2)  # L2 normalize
             
-            # Dynamic loss weighting based on prediction balance
-            pred_balance = pred_probs.std()  # measure of prediction imbalance
-            balance_factor = torch.exp(4.0 * pred_balance)  # exponential scaling
-            diversity_weight = 50.0 * balance_factor  # increase base weight
+            # Dynamic loss weighting based on white pixel accuracy
+            white_accuracy_factor = torch.exp(-4.0 * white_accuracy) if white_mask.any() else torch.tensor(1.0, device=device)
             
-            # Combine losses with adjusted weights
+            # Combine losses with adjusted weights and additional balance terms
             total_loss = (
-                1.0 * loss +                    # Main reconstruction loss
-                diversity_weight * pred_diversity_loss +  # Stronger prediction diversity
-                0.5 * action_diversity_loss     # Action diversity
+                1.0 * ce_loss +                    # Main reconstruction loss
+                2.0 * white_accuracy_factor * white_loss +  # Emphasized white pixel loss
+                0.5 * black_loss +                 # Reduced black pixel loss
+                50.0 * pred_diversity_loss +       # Strong prediction diversity
+                25.0 * token_balance_loss +        # Token usage balance
+                0.5 * action_diversity_loss        # Action diversity
             )
             
             # Add gradient penalty to prevent collapse
