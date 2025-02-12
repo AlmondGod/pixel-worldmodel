@@ -216,6 +216,10 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             target_tokens = tokens[:, 1:][mask]  # Get next tokens where mask is True
             pred_tokens = logits[mask]  # Get predictions where mask is True
             
+            # Reshape target tokens to be 1D for cross entropy loss
+            target_tokens = target_tokens.reshape(-1).long()  # Convert to indices
+            pred_tokens = pred_tokens.reshape(-1, model.output.out_features)  # [N, n_codes]
+            
             # Calculate cross entropy loss
             loss = F.cross_entropy(pred_tokens, target_tokens)
             
