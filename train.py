@@ -213,7 +213,7 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             
             # Create random masks with higher masking rate for binary data
             mask_ratio = torch.rand(1).item() * 0.3 + 0.7  # 70-100% masking rate
-            mask = torch.rand_like(tokens[:, 0]).float() < mask_ratio  # Create mask for all patches of first frame
+            mask = torch.rand(tokens[:, 0].shape, device=tokens.device) < mask_ratio  # Create mask for all patches of first frame
             
             # Predict next tokens using current tokens and action
             logits = model(tokens[:, 0], actions)  # Use first frame tokens to predict second frame
