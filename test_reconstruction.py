@@ -155,29 +155,15 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             action = action.reshape(-1)[0]  # Take first action
             print(f"  Selected action: {action.item()}")
             
-            # Reshape initial tokens to [B, 1, N] and then pad to [B, 16, N]
-            initial_tokens = initial_tokens.unsqueeze(1)  # [B, 1, N]
-            B, _, N = initial_tokens.shape
-            padded_tokens = torch.zeros(B, 16, N, device=initial_tokens.device)
-            padded_tokens[:, 0:1] = initial_tokens  # Only put tokens in first position
-            
-            print("\nDynamics input debug:")
-            print(f"  Padded tokens unique values: {torch.unique(padded_tokens).tolist()}")
-            print(f"  Padded tokens shape: {padded_tokens.shape}")
-            
-            # Predict next tokens
-            logits = dynamics(padded_tokens, action.unsqueeze(0))
+            # Predict next tokens directly from initial frame tokens
+            logits = dynamics(initial_tokens, action.unsqueeze(0))
             print("\nDynamics output debug:")
             print(f"  Logits min/max: {logits.min().item():.4f}/{logits.max().item():.4f}")
             print(f"  Logits mean/std: {logits.mean().item():.4f}/{logits.std().item():.4f}")
             
-            # Get next token predictions for all positions
-            next_tokens = torch.argmax(logits, dim=-1)  # [B, seq_len]
+            # Get next token predictions
+            next_tokens = torch.argmax(logits, dim=-1)  # [B, n_patches]
             print(f"  Predicted tokens unique values: {torch.unique(next_tokens).tolist()}")
-            
-            # Take predictions for all patches (not just first position)
-            next_tokens = next_tokens.reshape(B, -1)  # [B, 256]
-            print(f"  Reshaped tokens unique values: {torch.unique(next_tokens).tolist()}")
             
             # Get embeddings from the quantizer
             z_q = vqvae.quantizer.embedding(next_tokens)  # [B, 256, code_dim]
@@ -196,11 +182,14 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             print(f"  Decoder logits min/max: {logits.min().item():.4f}/{logits.max().item():.4f}")
             print(f"  Decoder logits mean/std: {logits.mean().item():.4f}/{logits.std().item():.4f}")
             
+            # Get batch size from next_tokens
+            batch_size = next_tokens.size(0)
+            
             # Reshape logits and apply sigmoid + threshold
-            logits = logits.reshape(B, 16, 16, 16)  # [B, H/4, W/4, 16]
-            logits = logits.reshape(B, 16, 16, 4, 4)  # [B, H/4, W/4, p, p]
+            logits = logits.reshape(batch_size, 16, 16, 16)  # [B, H/4, W/4, 16]
+            logits = logits.reshape(batch_size, 16, 16, 4, 4)  # [B, H/4, W/4, p, p]
             logits = logits.permute(0, 1, 3, 2, 4)  # [B, H/4, p, W/4, p]
-            logits = logits.reshape(B, 64, 64)  # [B, H, W]
+            logits = logits.reshape(batch_size, 64, 64)  # [B, H, W]
             
             # Apply sigmoid and threshold with a small margin for numerical stability
             predicted_frame = torch.sigmoid(logits)
