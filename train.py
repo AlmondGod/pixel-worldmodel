@@ -11,12 +11,66 @@ import numpy as np
 import gc
 from datetime import datetime
 from test_reconstruction import test_vqvae_reconstruction, test_dynamics
+import matplotlib.pyplot as plt
 
 EPOCHS = 4
 SAVE_DIR = Path("saved_models")
 BATCH_SIZE = 8  # Reduced from 32
 GRADIENT_ACCUMULATION_STEPS = 2  # Reduced from 16
 CHECKPOINT_EVERY = 1
+
+class LossTracker:
+    def __init__(self, save_dir):
+        self.save_dir = Path(save_dir)
+        self.losses = {
+            'total_loss': [],
+            'white_loss': [],
+            'black_loss': [],
+            'action_diversity_loss': [],
+            'pred_diversity_loss': [],
+            'token_accuracy': [],
+            'white_accuracy': [],
+            'black_accuracy': []
+        }
+        self.batch_indices = []
+        self.current_batch = 0
+        
+    def update(self, losses_dict):
+        self.current_batch += 1
+        self.batch_indices.append(self.current_batch)
+        for key, value in losses_dict.items():
+            if key in self.losses:
+                self.losses[key].append(value)
+    
+    def plot(self, epoch):
+        plt.figure(figsize=(15, 10))
+        
+        # Plot losses
+        plt.subplot(2, 1, 1)
+        for key in ['total_loss', 'white_loss', 'black_loss', 'action_diversity_loss', 'pred_diversity_loss']:
+            if self.losses[key]:  # Only plot if we have data
+                plt.plot(self.batch_indices, self.losses[key], label=key)
+        plt.title(f'Training Losses - Epoch {epoch}')
+        plt.xlabel('Batch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        
+        # Plot accuracies
+        plt.subplot(2, 1, 2)
+        for key in ['token_accuracy', 'white_accuracy', 'black_accuracy']:
+            if self.losses[key]:  # Only plot if we have data
+                plt.plot(self.batch_indices, self.losses[key], label=key)
+        plt.title(f'Accuracies - Epoch {epoch}')
+        plt.xlabel('Batch')
+        plt.ylabel('Accuracy')
+        plt.legend()
+        plt.grid(True)
+        
+        plt.tight_layout()
+        # Handle both integer and fractional epochs in filename
+        plt.savefig(self.save_dir / f'training_plots_epoch_{str(epoch).replace(".", "_")}.png')
+        plt.close()
 
 # write a parse args to take in data path
 def parse_args():
@@ -165,6 +219,9 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
     vqvae.eval()  # Ensure VQVAE is in eval mode
     lam.eval()    # Ensure LAM is in eval mode
     
+    # Initialize loss tracker
+    loss_tracker = LossTracker(save_dir)
+    
     # Track best model
     best_accuracy = 0.0
     best_epoch = 0
@@ -174,14 +231,20 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
         )
         
     for epoch in range(epochs):
-
-        
         total_loss = 0
         total_token_accuracy = 0
         total_mask_ratio = 0
         n_batches = 0
         
-        for batch in dataloader:
+        # Calculate batches per quarter epoch
+        batches_per_epoch = len(dataloader)
+        batches_per_quarter = batches_per_epoch // 4
+        last_quarter = -1  # Track which quarter we're in
+        
+        for batch_idx, batch in enumerate(dataloader):
+            # Calculate current quarter (0, 1, 2, or 3)
+            current_quarter = batch_idx // batches_per_quarter
+            
             batch = batch.to(device)
             optimizer.zero_grad()
             
@@ -291,6 +354,13 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             with torch.no_grad():
                 pred_indices = torch.argmax(pred_tokens, dim=-1)
                 token_accuracy = (pred_indices == target_tokens).float().mean()
+                
+                # Calculate separate accuracies for white and black tokens
+                white_mask = target_tokens == 1
+                black_mask = target_tokens == 0
+                white_accuracy = (pred_indices[white_mask] == target_tokens[white_mask]).float().mean() if white_mask.any() else torch.tensor(0.0)
+                black_accuracy = (pred_indices[black_mask] == target_tokens[black_mask]).float().mean() if black_mask.any() else torch.tensor(0.0)
+                
                 total_token_accuracy += token_accuracy.item()
                 
                 # Track unique tokens and predictions
@@ -299,6 +369,25 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 
                 # Track action entropy
                 action_entropy_val = action_entropy.item()
+            
+            # Update loss tracker
+            loss_tracker.update({
+                'total_loss': loss.item(),
+                'white_loss': white_loss.item(),
+                'black_loss': black_loss.item(),
+                'action_diversity_loss': action_diversity_loss.item(),
+                'pred_diversity_loss': pred_diversity_loss.item(),
+                'token_accuracy': token_accuracy.item(),
+                'white_accuracy': white_accuracy.item(),
+                'black_accuracy': black_accuracy.item()
+            })
+            
+            # Plot at quarter epochs and at the end of epoch
+            if current_quarter != last_quarter:
+                last_quarter = current_quarter
+                quarter_num = current_quarter + 1
+                print(f"\nPlotting at epoch {epoch}, quarter {quarter_num}/4")
+                loss_tracker.plot(f"{epoch}.{quarter_num}")
             
             optimizer.step()
             
@@ -323,6 +412,10 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 print(f"  Unique Predicted Tokens: {n_unique_preds}")
                 print(f"  Action Distribution: {torch.bincount(actions, minlength=4)}")
         
+        # Plot losses at the end of each epoch
+        loss_tracker.plot(epoch)
+        
+        # Print epoch statistics
         print(f"\nEpoch {epoch}")
         print(f"  Average Loss: {total_loss/n_batches:.4f}")
         print(f"  Average Token Accuracy: {total_token_accuracy/n_batches:.4f}")

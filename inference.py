@@ -245,12 +245,19 @@ class WorldModelInference:
             print(f"  Unique values: {len(np.unique(next_frame))}")
             print(f"  Frame hash: {hash(next_frame.tobytes())}")
             
-            # Normalize to [0, 1]
+            # First normalize to [0, 1]
             next_frame = (next_frame - next_frame.min()) / (next_frame.max() - next_frame.min() + 1e-8)
             
-            print("[generate_next_frame] Final frame stats after normalization:")
+            # Then threshold to get pure binary output
+            next_frame = (next_frame > 0.5).astype(np.float32)
+            
+            print("[generate_next_frame] Final frame stats after binarization:")
             print(f"  min: {next_frame.min():.3f}, max: {next_frame.max():.3f}, mean: {next_frame.mean():.3f}")
+            print(f"  Unique values: {len(np.unique(next_frame))}")
             print(f"  Frame hash: {hash(next_frame.tobytes())}")
+            
+            # Verify binary output
+            assert np.all(np.logical_or(next_frame == 0, next_frame == 1)), "Output must be binary (0 or 1)"
             
             return next_frame
     
@@ -338,8 +345,8 @@ class WorldModelInference:
 def main():
     parser = argparse.ArgumentParser(description='World Model Inference')
     parser.add_argument('--vqvae', type=str, default='/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/:mnt:base:pixel-worldmodel:saved_models:20250210_025105:vqvae:checkpoint_epoch_1.pth', help='Path to VQVAE weights')
-    parser.add_argument('--lam', type=str, default='/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/lam', help='Path to LAM weights')
-    parser.add_argument('--dynamics', type=str, default='/Users/almondgod/Repositories/pixel-worldmodel/saved_models/complete_1/dynamics', help='Path to Dynamics weights')
+    parser.add_argument('--lam', type=str, default='/Users/almondgod/Repositories/pixel-worldmodel/saved_models/2.1/diverse-lam', help='Path to LAM weights')
+    parser.add_argument('--dynamics', type=str, default='/Users/almondgod/Repositories/pixel-worldmodel/saved_models/2.1/dynamics-model-attempt-2.1', help='Path to Dynamics weights')
     parser.add_argument('--video', type=str, default='pong.mp4', help='Path to initial video')
     parser.add_argument('--mode', type=str, choices=['interactive', 'autonomous'], 
                        default='interactive', help='Inference mode')
