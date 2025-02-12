@@ -207,14 +207,14 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             
             # Create random masks with higher masking rate for binary data
             mask_ratio = torch.rand(1).item() * 0.3 + 0.7  # 70-100% masking rate
-            mask = torch.rand_like(tokens[:, :-1].float()) < mask_ratio
+            mask = torch.rand_like(tokens[:, :-1, 0].float()) < mask_ratio  # Create mask for sequence length only
             
             # Predict next tokens using current tokens and action
             logits = model(tokens[:, :-1], actions)  # Use tokens t to predict t+1
             
             # Apply mask to both predictions and targets
-            target_tokens = tokens[:, 1:][mask]
-            pred_tokens = logits[mask]
+            target_tokens = tokens[:, 1:][mask]  # Get next tokens where mask is True
+            pred_tokens = logits[mask]  # Get predictions where mask is True
             
             # Calculate cross entropy loss
             loss = F.cross_entropy(pred_tokens, target_tokens)
