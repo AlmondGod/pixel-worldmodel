@@ -167,22 +167,26 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             print(f"  Selected token shape: {next_tokens.shape}")
             
             # Convert to VQVAE patch tokens (256 patches for 16x16 grid)
-            next_tokens = next_tokens.unsqueeze(-1).expand(-1, 256)  # [B, 256]
+            next_tokens = next_tokens.unsqueeze(-1).repeat(1, 256)  # [B, 256]
             print(f"  Expanded tokens shape: {next_tokens.shape}")
             
             # Get embeddings from the quantizer
             z_q = vqvae.quantizer.embedding(next_tokens)  # [B, 256, code_dim]
             print(f"  Embedded tokens shape: {z_q.shape}")
             
+            # Reshape for decoder
+            z_q = z_q.reshape(B, 16, 16, -1)  # [B, 16, 16, code_dim]
+            z_q = z_q.permute(0, 3, 1, 2)  # [B, code_dim, 16, 16]
+            print(f"  Reshaped z_q shape: {z_q.shape}")
+            
             # Decode to get predicted frame
-            predicted_frame = vqvae.decoder(z_q)
-            print(f"  Predicted frame shape after decoder: {predicted_frame.shape}")
+            predicted_frame = vqvae.decoder(z_q)  # Should output [B, 4096]
+            print(f"  Raw decoder output shape: {predicted_frame.shape}")
             
-            # Reshape to final image dimensions
-            predicted_frame = predicted_frame.reshape(B, 1, 64, 64)  # Final image shape
-            
-            # Ensure binary output with proper thresholding
+            # Reshape to image dimensions and apply sigmoid for binary output
+            predicted_frame = predicted_frame.reshape(B, 1, 64, 64)
             predicted_frame = (torch.sigmoid(predicted_frame) > 0.5).float()
+            print(f"  Final predicted frame shape: {predicted_frame.shape}")
             
             # Verify binary output
             assert torch.all(torch.logical_or(predicted_frame == 0, predicted_frame == 1)), "Predicted frame must be binary"
