@@ -231,12 +231,29 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             pred_tokens = pred_tokens.reshape(-1, pred_tokens.size(-1))  # [M*N, n_codes]
             
             # Calculate cross entropy loss on masked positions only
-            loss = F.cross_entropy(pred_tokens, target_tokens)
+            # Add class weights to handle imbalance
+            n_white = (target_tokens == 1).float().sum()
+            n_black = (target_tokens == 0).float().sum()
+            pos_weight = (n_black / n_white).clamp(min=1.0, max=10.0)
+            class_weights = torch.ones(16, device=device)  # weights for each token class
+            class_weights[0] = 0.1  # reduce weight for black token
+            
+            # Calculate separate losses for black and white pixels
+            pred_probs = torch.softmax(pred_tokens, dim=-1)
+            white_mask = target_tokens == 1
+            black_mask = target_tokens == 0
+            
+            # Calculate losses separately
+            white_loss = F.cross_entropy(pred_tokens[white_mask], target_tokens[white_mask]) if white_mask.any() else torch.tensor(0.0, device=device)
+            black_loss = F.cross_entropy(pred_tokens[black_mask], target_tokens[black_mask]) if black_mask.any() else torch.tensor(0.0, device=device)
+            
+            # Total loss with class weights
+            loss = F.cross_entropy(pred_tokens, target_tokens, weight=class_weights)
             
             # Add prediction diversity loss to encourage balanced token usage (only on masked positions)
-            pred_probs = torch.softmax(pred_tokens, dim=-1).mean(dim=0)
             pred_entropy = -(pred_probs * torch.log(pred_probs + 1e-10)).sum()
-            pred_diversity_loss = -0.5 * pred_entropy
+            target_entropy = torch.log(torch.tensor(16.0, device=device))  # maximum possible entropy
+            pred_diversity_loss = -2.0 * (pred_entropy - target_entropy)
             
             # Add action diversity loss
             action_probs = torch.bincount(actions, minlength=4).float()
@@ -251,20 +268,16 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             frame_diffs = frame_diffs.reshape(batch.size(0), -1)
             frame_diffs = F.normalize(frame_diffs, dim=1, p=2)  # L2 normalize
             
-            # Dynamic loss weighting based on action entropy
-            # If entropy is very low, increase diversity weight
-            entropy_factor = torch.exp(-8.0 * action_entropy)  # Much steeper exponential
-            diversity_weight = 100.0 * entropy_factor  # 10x larger base weight
+            # Dynamic loss weighting based on prediction balance
+            pred_balance = pred_probs.std()  # measure of prediction imbalance
+            balance_factor = torch.exp(4.0 * pred_balance)  # exponential scaling
+            diversity_weight = 50.0 * balance_factor  # increase base weight
             
-            # If entropy is critically low, make diversity loss completely dominate
-            if action_entropy < 0.2:  # About 15% of maximum entropy
-                diversity_weight = diversity_weight * 10.0
-            
-            # Combine losses with dynamic weights
+            # Combine losses with adjusted weights
             total_loss = (
-                0.1 * loss +           # Reduce reconstruction weight
-                0.5 * pred_entropy +         # Reduce prediction entropy weight
-                diversity_weight * action_diversity_loss  # Let diversity dominate
+                1.0 * loss +                    # Main reconstruction loss
+                diversity_weight * pred_diversity_loss +  # Stronger prediction diversity
+                0.5 * action_diversity_loss     # Action diversity
             )
             
             # Add gradient penalty to prevent collapse
@@ -297,6 +310,8 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             if n_batches % 10 == 0:
                 print(f"\nBatch {n_batches}/{len(dataloader)}")
                 print(f"  CE Loss: {loss.item():.4f}")
+                print(f"  White Pixel Loss: {white_loss.item():.4f}")
+                print(f"  Black Pixel Loss: {black_loss.item():.4f}")
                 print(f"  Action Diversity Loss: {action_diversity_loss.item():.4f}")
                 print(f"  Pred Diversity Loss: {pred_diversity_loss.item():.4f}")
                 print(f"  InfoNCE Loss: {pred_entropy.item():.4f}")
