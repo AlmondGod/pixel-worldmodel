@@ -181,37 +181,31 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             
             # Get tokens from VQVAE
             with torch.no_grad():
-                _, tokens, _, _ = vqvae(batch)  # Updated to handle new return values
-                # Split into previous and next frames
-                prev_frames = batch[:, :-1]  # [B, T-1, H, W]
-                next_frames = batch[:, 1:]   # [B, T-1, H, W]
-                actions = lam.infer_actions(prev_frames, next_frames)
+                _, tokens, _, _ = vqvae(batch)  # [B, T, H*W/16] tokens
                 
-                # Debug prints for action distribution and shapes
+                # For each frame pair (t, t+1), get the action that transforms t into t+1
+                # We only need one action per sequence
+                prev_frame = batch[:, 0:1]  # [B, 1, H, W] - first frame
+                next_frame = batch[:, 1:2]  # [B, 1, H, W] - second frame
+                actions = lam.infer_actions(prev_frame, next_frame)  # [B] - one action per sequence
+                
+                # Debug prints for shapes
                 if n_batches % 10 == 0:
                     print("\nLAM Action Debug:")
                     print(f"  Batch shape: {batch.shape}")
-                    print(f"  Prev frames shape: {prev_frames.shape}")
-                    print(f"  Next frames shape: {next_frames.shape}")
+                    print(f"  Prev frame shape: {prev_frame.shape}")
+                    print(f"  Next frame shape: {next_frame.shape}")
                     print(f"  Actions shape: {actions.shape}")
                     print(f"  Action values: {actions.unique().tolist()}")
                     print(f"  Action distribution: {torch.bincount(actions, minlength=4)}")
-                
-                # No need to reshape actions since LAM.infer_actions already returns the correct shape
-                # Just ensure tokens match the action dimensions by taking the appropriate subset
-                tokens = tokens[:actions.size(0)]
-                
-                # Verify shapes match
-                if n_batches % 10 == 0:
                     print(f"  Token shape: {tokens.shape}")
-                    print(f"  Actions shape: {actions.shape}")
             
             # Create random masks with higher masking rate for binary data
             mask_ratio = torch.rand(1).item() * 0.3 + 0.7  # 70-100% masking rate
             mask = torch.rand_like(tokens[:, :-1].float()) < mask_ratio
             
-            # Predict next tokens
-            logits = model(tokens[:, :-1], actions)
+            # Predict next tokens using current tokens and action
+            logits = model(tokens[:, :-1], actions)  # Use tokens t to predict t+1
             
             # Apply mask to both predictions and targets
             target_tokens = tokens[:, 1:][mask]
@@ -232,8 +226,8 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             pred_diversity_loss = -0.5 * pred_entropy
             
             # Calculate frame differences for similarity computation
-            last_prev_frames = prev_frames[:, -1]  # [B, H, W]
-            next_frames_last = next_frames[:, -1]  # [B, H, W]
+            last_prev_frames = prev_frame.float()
+            next_frames_last = next_frame.float()
             frame_diffs = next_frames_last.float() - last_prev_frames.float()
             frame_diffs = frame_diffs.reshape(batch.size(0), -1)
             frame_diffs = F.normalize(frame_diffs, dim=1, p=2)  # L2 normalize
