@@ -168,8 +168,14 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
     # Track best model
     best_accuracy = 0.0
     best_epoch = 0
-    
+
+    accuracy, iou, white_acc, black_acc = test_dynamics(
+            vqvae, model, lam, dataloader, device, save_dir
+        )
+        
     for epoch in range(epochs):
+
+        
         total_loss = 0
         total_token_accuracy = 0
         total_mask_ratio = 0
@@ -330,9 +336,11 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
         # Evaluate on test set
         print("\nEvaluating dynamics model...")
         model.eval()
+        
         accuracy, iou, white_acc, black_acc = test_dynamics(
             vqvae, model, lam, dataloader, device, save_dir
         )
+        
         model.train()
         
         # Save best model
