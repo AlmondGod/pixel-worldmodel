@@ -213,63 +213,43 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             
             # Create random masks with higher masking rate for binary data
             mask_ratio = torch.rand(1).item() * 0.3 + 0.7  # 70-100% masking rate
-            mask = torch.rand_like(tokens[:, :-1, 0].float()) < mask_ratio  # Create mask for sequence length only
+            mask = torch.rand_like(tokens[:, 0]).float() < mask_ratio  # Create mask for all patches of first frame
             
             # Predict next tokens using current tokens and action
-            logits = model(tokens[:, :-1], actions)  # Use tokens t to predict t+1
+            logits = model(tokens[:, 0], actions)  # Use first frame tokens to predict second frame
             
-            # Reshape tokens for masking
-            B, T, N = tokens[:, 1:].shape  # Get shape of next tokens
-            target_tokens = tokens[:, 1:].reshape(-1, N)  # [B*T, N]
-            pred_tokens = logits.reshape(-1, logits.size(-1))  # [B*T, n_codes]
-            
-            # Expand mask to match token dimensions
-            mask = mask.reshape(-1)  # [B*T]
+            # Get target tokens (second frame)
+            target_tokens = tokens[:, 1]  # [B, N]
+            pred_tokens = logits  # [B, N, n_codes]
             
             # Apply mask to both predictions and targets
             target_tokens = target_tokens[mask]  # [M, N] where M is number of masked tokens
-            pred_tokens = pred_tokens[mask]  # [M, n_codes]
+            pred_tokens = pred_tokens[mask]  # [M, N, n_codes]
             
-            # Convert target tokens to indices for cross entropy
+            # Reshape for cross entropy
             target_tokens = target_tokens.reshape(-1).long()  # [M*N]
-            pred_tokens = pred_tokens.repeat_interleave(N, dim=0)  # [M*N, n_codes]
+            pred_tokens = pred_tokens.reshape(-1, pred_tokens.size(-1))  # [M*N, n_codes]
             
-            # Calculate cross entropy loss
+            # Calculate cross entropy loss on masked positions only
             loss = F.cross_entropy(pred_tokens, target_tokens)
             
-            # Add action diversity loss
-            action_probs = torch.bincount(actions, minlength=4).float()  # Changed from 8 to 4
-            action_probs = action_probs / action_probs.sum()
-            action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
-            action_diversity_loss = -2.0 * (action_entropy - torch.log(torch.tensor(4.0)).to(device))  # Changed from 8.0 to 4.0
-            
-            # Add prediction diversity loss to encourage balanced token usage
+            # Add prediction diversity loss to encourage balanced token usage (only on masked positions)
             pred_probs = torch.softmax(pred_tokens, dim=-1).mean(dim=0)
             pred_entropy = -(pred_probs * torch.log(pred_probs + 1e-10)).sum()
             pred_diversity_loss = -0.5 * pred_entropy
             
-            # Calculate frame differences for similarity computation
+            # Add action diversity loss
+            action_probs = torch.bincount(actions, minlength=4).float()
+            action_probs = action_probs / action_probs.sum()
+            action_entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum()
+            action_diversity_loss = -2.0 * (action_entropy - torch.log(torch.tensor(4.0)).to(device))
+            
+            # Calculate frame differences
             last_prev_frames = prev_frame.float()
             next_frames_last = next_frame.float()
             frame_diffs = next_frames_last.float() - last_prev_frames.float()
             frame_diffs = frame_diffs.reshape(batch.size(0), -1)
             frame_diffs = F.normalize(frame_diffs, dim=1, p=2)  # L2 normalize
-            
-            # Calculate similarity matrix between all pairs of transitions
-            similarities = torch.matmul(frame_diffs, frame_diffs.t())  # [B, B]
-            
-            # Get positive and negative masks for InfoNCE
-            # Convert actions to one-hot first
-            actions_one_hot = F.one_hot(actions, num_classes=4).float()  # Changed from 8 to 4
-            pos_mask = torch.matmul(actions_one_hot, actions_one_hot.t())  # [B, B]
-            neg_mask = 1 - pos_mask
-            
-            # InfoNCE loss (with temperature scaling)
-            temperature = 0.5  # Increased from 0.1
-            exp_similarities = torch.exp(similarities / temperature)
-            pos_similarities = (exp_similarities * pos_mask).sum(1)  # [B]
-            neg_similarities = (exp_similarities * neg_mask).sum(1)  # [B]
-            infonce_loss = -torch.log(pos_similarities / (pos_similarities + neg_similarities + 1e-10)).mean()
             
             # Dynamic loss weighting based on action entropy
             # If entropy is very low, increase diversity weight
@@ -283,7 +263,7 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
             # Combine losses with dynamic weights
             total_loss = (
                 0.1 * loss +           # Reduce reconstruction weight
-                0.5 * infonce_loss +         # Reduce InfoNCE weight
+                0.5 * pred_entropy +         # Reduce prediction entropy weight
                 diversity_weight * action_diversity_loss  # Let diversity dominate
             )
             
@@ -319,7 +299,7 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 print(f"  CE Loss: {loss.item():.4f}")
                 print(f"  Action Diversity Loss: {action_diversity_loss.item():.4f}")
                 print(f"  Pred Diversity Loss: {pred_diversity_loss.item():.4f}")
-                print(f"  InfoNCE Loss: {infonce_loss.item():.4f}")
+                print(f"  InfoNCE Loss: {pred_entropy.item():.4f}")
                 print(f"  Total Loss: {total_loss.item():.4f}")
                 print(f"  Token Accuracy: {token_accuracy.item():.4f}")
                 print(f"  Action Entropy: {action_entropy_val:.4f}")
