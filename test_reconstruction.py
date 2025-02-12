@@ -153,23 +153,26 @@ def test_dynamics(vqvae, dynamics, lam, dataloader, device, save_dir, n_test_seq
             
             # Predict next tokens
             logits = dynamics(padded_tokens, action.unsqueeze(0))
-            next_tokens = torch.argmax(logits[:, 0], dim=-1)  # Only take first position's prediction
             
             # Debug prints
             print(f"\nShape debug:")
+            print(f"  Logits shape: {logits.shape}")
+            
+            # Get next token predictions for all positions
+            next_tokens = torch.argmax(logits, dim=-1)  # [B, seq_len]
             print(f"  Next tokens shape: {next_tokens.shape}")
             
-            # Reshape next_tokens to match VQVAE's expected input shape
-            next_tokens = next_tokens.reshape(B, 256)  # [B, 256] for 16x16 patches
-            print(f"  Reshaped tokens shape: {next_tokens.shape}")
+            # Take only the first predicted token for each sequence
+            next_tokens = next_tokens[:, 0]  # [B]
+            print(f"  Selected token shape: {next_tokens.shape}")
+            
+            # Convert to VQVAE patch tokens (256 patches for 16x16 grid)
+            next_tokens = next_tokens.unsqueeze(-1).expand(-1, 256)  # [B, 256]
+            print(f"  Expanded tokens shape: {next_tokens.shape}")
             
             # Get embeddings from the quantizer
             z_q = vqvae.quantizer.embedding(next_tokens)  # [B, 256, code_dim]
             print(f"  Embedded tokens shape: {z_q.shape}")
-            
-            # Reshape for decoder - note that we keep it in [B, N, code_dim] format
-            # as that's what the decoder expects
-            print(f"  Final z_q shape before decoder: {z_q.shape}")
             
             # Decode to get predicted frame
             predicted_frame = vqvae.decoder(z_q)
