@@ -38,6 +38,10 @@ class MaskGITDynamics(nn.Module):
         # tokens: [batch, 256] - token indices for each patch
         # actions: [batch] action indices
         
+        # Convert tokens to long integers
+        tokens = tokens.long()
+        actions = actions.long()
+        
         # Embed tokens and add positional encoding
         x = self.token_embedding(tokens)  # [batch, 256, dim]
         x = x + self.position_embedding[:, :x.size(1)]
