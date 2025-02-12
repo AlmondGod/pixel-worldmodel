@@ -187,27 +187,19 @@ def train_dynamics(model, vqvae, lam, dataloader, optimizer, save_dir, epochs=EP
                 next_frames = batch[:, 1:]   # [B, T-1, H, W]
                 actions = lam.infer_actions(prev_frames, next_frames)
                 
-                # Debug prints for action distribution before any reshaping
+                # Debug prints for action distribution and shapes
                 if n_batches % 10 == 0:
-                    print("\nLAM Action Debug (Before Reshape):")
-                    print(f"  Action shape: {actions.shape}")
+                    print("\nLAM Action Debug:")
+                    print(f"  Batch shape: {batch.shape}")
+                    print(f"  Prev frames shape: {prev_frames.shape}")
+                    print(f"  Next frames shape: {next_frames.shape}")
+                    print(f"  Actions shape: {actions.shape}")
                     print(f"  Action values: {actions.unique().tolist()}")
                     print(f"  Action distribution: {torch.bincount(actions, minlength=4)}")
                 
-                # Reshape actions while preserving all actions (not just first one)
-                B = batch.size(0)  # Batch size
-                T = prev_frames.size(1)  # Sequence length
-                actions = actions.reshape(B * T)  # Flatten all actions
-                
-                # Debug prints after reshaping
-                if n_batches % 10 == 0:
-                    print("\nLAM Action Debug (After Reshape):")
-                    print(f"  Action shape: {actions.shape}")
-                    print(f"  Action values: {actions.unique().tolist()}")
-                    print(f"  Action distribution: {torch.bincount(actions, minlength=4)}")
-                
-                # Ensure tokens match the action dimensions
-                tokens = tokens.repeat_interleave(T, dim=0)
+                # No need to reshape actions since LAM.infer_actions already returns the correct shape
+                # Just ensure tokens match the action dimensions by taking the appropriate subset
+                tokens = tokens[:actions.size(0)]
                 
                 # Verify shapes match
                 if n_batches % 10 == 0:
